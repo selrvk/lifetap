@@ -116,6 +116,7 @@ export default function HomeScreen() {
                 source={require('./../../assets/icons/read-nfc-icon.png')}
               />
             </View>
+
           </LinearGradient>
         </TouchableOpacity>
 
