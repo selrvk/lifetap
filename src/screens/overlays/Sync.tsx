@@ -93,7 +93,7 @@ export default function SyncOverlay() {
             zIndex: 10,
           }}>
             <Image
-              source={require('./../../../assets/lifetap-logo.png')}
+              source={require('./../../../assets/icons/upload-to-cloud.png')}
               style={{ width: 80, height: 80 }}
               resizeMode="contain"
             />
