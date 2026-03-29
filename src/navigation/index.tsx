@@ -3,7 +3,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Image, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
+import { View, Image, TouchableOpacity, StyleSheet, Platform, Animated, Text } from 'react-native';
 
 import HomeScreen from '../screens/HomeScreen';
 import ProfileScreen from '../screens/ProfileScreen';
@@ -16,27 +16,20 @@ import SuccessOverlay from '../screens/overlays/Success';
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-const CIRCLE_SIZE = 54; // defined at module level so StyleSheet can use it
-
 const TAB_ICONS: Record<string, any> = {
   Profile: require('./../../assets/icons/profile.png'),
-  Home:    require('./../../assets/icons/home.png'),
-  Account: require('./../../assets/icons/settings.png'),
+  Home:    require('./../../assets/lifetap-logo.png'),
+  Settings: require('./../../assets/icons/settings.png'),
 };
-
-// ─────────────────────────────────────────────
-// CUSTOM TAB BAR
-// ─────────────────────────────────────────────
 
 function CustomTabBar({ state, descriptors, navigation }: any) {
   const tabCount = state.routes.length;
   const animatedValue = useRef(new Animated.Value(state.index)).current;
-  const [barWidth, setBarWidth] = useState(0); // ← moved inside component
+  const [barWidth, setBarWidth] = useState(0);
 
   const BAR_PADDING = 16;
   const USABLE_WIDTH = barWidth - BAR_PADDING * 2;
   const TAB_WIDTH = USABLE_WIDTH / tabCount;
-  const centerOffset = BAR_PADDING + (TAB_WIDTH - CIRCLE_SIZE) / 2;
 
   useEffect(() => {
     if (barWidth === 0) return;
@@ -49,11 +42,11 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
   }, [state.index, barWidth]);
 
   const translateX = barWidth === 0
-  ? new Animated.Value(0)
-  : animatedValue.interpolate({
-      inputRange: state.routes.map((_: any, i: number) => i),
-      outputRange: state.routes.map((_: any, i: number) => (i * TAB_WIDTH) + centerOffset),
-    });
+    ? new Animated.Value(0)
+    : animatedValue.interpolate({
+        inputRange: state.routes.map((_: any, i: number) => i),
+        outputRange: state.routes.map((_: any, i: number) => BAR_PADDING + i * TAB_WIDTH),
+      });
 
   return (
     <View style={styles.wrapper}>
@@ -61,15 +54,15 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
         style={styles.bar}
         onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
       >
-        {/* Sliding circle indicator */}
+        {/* Sliding pill indicator */}
         {barWidth > 0 && (
           <Animated.View
             style={[
-              styles.slidingCircle,
-              { transform: [{ translateX }] },
+              styles.slidingRectangle,
+              { width: TAB_WIDTH, transform: [{ translateX }] },
             ]}
           >
-            <View style={styles.circle} />
+            <View style={styles.rectangle} />
           </Animated.View>
         )}
 
@@ -98,12 +91,20 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
               <Image
                 source={TAB_ICONS[route.name]}
                 style={{
-                  width: route.name === 'Home' ? 32 : 28,
-                  height: route.name === 'Home' ? 32 : 28,
+                  width: route.name === 'Home' ? 26 : 22,
+                  height: route.name === 'Home' ? 26 : 22,
                   tintColor: focused ? '#ffffff' : '#94a3b8',
                 }}
                 resizeMode="contain"
               />
+              <Text style={{
+                fontSize: 10,
+                fontWeight: '600',
+                color: focused ? '#ffffff' : '#94a3b8',
+                marginTop: 3,
+              }}>
+                {route.name}
+              </Text>
             </TouchableOpacity>
           );
         })}
@@ -127,12 +128,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#ffffff',
     borderRadius: 28,
+    borderColor: '#e2e8f0',
+    borderWidth: 1,
     height: 68,
     paddingHorizontal: 16,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.10,
-    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.02,
+    shadowRadius: 20,
     elevation: 8,
     overflow: 'hidden',
   },
@@ -143,27 +146,22 @@ const styles = StyleSheet.create({
     height: '100%',
     zIndex: 10,
   },
-  slidingCircle: {
+  slidingRectangle: {
     position: 'absolute',
     top: 0,
     bottom: 0,
     left: 0,
-    width: CIRCLE_SIZE,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 1,
   },
-  circle: {
-    width: CIRCLE_SIZE,
-    height: CIRCLE_SIZE,
-    borderRadius: CIRCLE_SIZE / 2,
+  rectangle: {
+    width: '100%',
+    height: 48,
+    borderRadius: 12,
     backgroundColor: '#0d9488',
   },
 });
-
-// ─────────────────────────────────────────────
-// TAB NAVIGATOR
-// ─────────────────────────────────────────────
 
 function TabNavigator() {
   return (
@@ -173,14 +171,10 @@ function TabNavigator() {
     >
       <Tab.Screen name="Profile" component={ProfileScreen} />
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Account" component={AccountScreen} />
+      <Tab.Screen name="Settings" component={AccountScreen} />
     </Tab.Navigator>
   );
 }
-
-// ─────────────────────────────────────────────
-// ROOT NAVIGATOR
-// ─────────────────────────────────────────────
 
 export default function Navigation() {
   return (
