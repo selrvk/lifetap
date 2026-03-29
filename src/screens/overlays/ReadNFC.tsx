@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Image, Animated } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function RippleRing({ delay, size }: { delay: number; size: number }) {
   const anim = useRef(new Animated.Value(0)).current;
@@ -68,10 +69,14 @@ function BouncingDot({ delay }: { delay: number }) {
 
 export default function ReadNFC() {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
 
   return (
-    <View className="flex-1 bg-black/60 items-center justify-end pb-10">
-      <View className="bg-white w-full rounded-t-3xl p-8 items-center">
+    <View className="flex-1 bg-black/60 items-center justify-end">
+      <View
+        className="bg-white w-full rounded-t-3xl p-8 items-center"
+        style={{ paddingBottom: insets.bottom + 24 }}
+      >
 
         {/* Ripple animation */}
         <View style={{ width: 120, height: 120, alignItems: 'center', justifyContent: 'center', marginBottom: 40, marginTop:20 }}>

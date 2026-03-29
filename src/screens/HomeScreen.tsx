@@ -1,23 +1,26 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   ScrollView,
-  Image
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import LinearGradient from 'react-native-linear-gradient';
-import { supabase } from './../lib/supabase'; 
-
-type SyncStatus = 'IN_SYNC' | 'TAG_BEHIND' | 'CLOUD_BEHIND' | 'NOT_SYNCED';
+import {
+  getLocalUser,
+  getSyncStatus,
+  SyncStatus,
+} from '../storage/asyncStorage';
 
 const SYNC_CONFIG: Record<SyncStatus, {
   label: string;
   sub: string;
   action?: string;
   actionBg: string;
+  navigateTo?: string;
 }> = {
   IN_SYNC: {
     label: 'LifeTap is up to date',
@@ -25,49 +28,55 @@ const SYNC_CONFIG: Record<SyncStatus, {
     actionBg: 'bg-teal-500',
   },
   TAG_BEHIND: {
-    label: 'NFC Data is out of date.',
-    sub: 'Tap to sync.',
+    label: 'NFC tag is out of date',
+    sub: 'Your local data is newer than the tag',
     action: 'WRITE TO LIFETAP',
     actionBg: 'bg-teal-600',
+    navigateTo: 'WriteNFC',
   },
   CLOUD_BEHIND: {
     label: 'Cloud is out of sync',
     sub: 'Local data is newer than cloud',
     action: 'UPLOAD TO CLOUD',
     actionBg: 'bg-teal-600',
+    navigateTo: 'SyncOverlay',
   },
   NOT_SYNCED: {
     label: 'Not synced anywhere',
     sub: 'Write to tag and upload to cloud',
     action: 'SYNC NOW',
     actionBg: 'bg-red-500',
+    navigateTo: 'WriteNFC',
   },
 };
 
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
-  const [userName, setUserName] = useState('...');
+  const [userName, setUserName] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('IN_SYNC');
+  const [hasUser, setHasUser] = useState<boolean>(false);
 
-  useEffect(() => {
-    async function fetchUser() {
-      const { data, error } = await supabase
-        .from('users')
-        .select('n')
-        .eq('id', 'lt-2')
-        .limit(1)
-        .single();
+  useFocusEffect(
+    useCallback(() => {
+      async function load() {
+        const [user, status] = await Promise.all([
+          getLocalUser(),
+          getSyncStatus(),
+        ]);
 
-      if (error) {
-        console.error('Error fetching user:', error.message);
-        return;
+        if (user) {
+          setHasUser(true);
+          setUserName(user.n.split(' ')[0]);
+          setSyncStatus(status);
+        } else {
+          setHasUser(false);
+          setUserName(null);
+        }
       }
+      load();
+    }, [])
+  );
 
-      setUserName(data.n);
-    }
-
-    fetchUser();
-  }, []);
-  const syncStatus: SyncStatus = 'TAG_BEHIND';
   const sync = SYNC_CONFIG[syncStatus];
 
   return (
@@ -81,18 +90,42 @@ export default function HomeScreen() {
         {/* Logo */}
         <View className="items-center mt-6 mb-5">
           <Image
-            className='w-40 h-40'
+            className="w-40 h-40"
             source={require('./../../assets/lifetap-logo-w-label.png')}
           />
         </View>
 
-        {/* Welcome */}
-        <View className="items-center mt-4">
-          <Text className="text-gray-400 text-sm">Welcome back,</Text>
-          <Text className="text-gray-700 text-base font-semibold text-xl">{userName}</Text>
-        </View>
+        {/* Welcome — or no profile banner */}
+        {hasUser ? (
+          <View className="items-center mt-4">
+            <Text className="text-gray-400 text-sm">Welcome back,</Text>
+            <Text className="text-gray-700 text-base font-semibold text-xl">
+              {userName}
+            </Text>
+          </View>
+        ) : (
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Profile')}
+            activeOpacity={0.8}
+          >
+            <View className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 mt-4 flex-row items-center">
+              <View className="w-8 h-8 rounded-xl bg-amber-100 items-center justify-center mr-3">
+                <Text className="text-base">👤</Text>
+              </View>
+              <View className="flex-1">
+                <Text className="text-amber-800 text-sm font-semibold">
+                  No profile set up
+                </Text>
+                <Text className="text-amber-600 text-xs mt-0.5">
+                  Tap to set up your LifeTap profile
+                </Text>
+              </View>
+              <Text className="text-amber-400 text-lg">›</Text>
+            </View>
+          </TouchableOpacity>
+        )}
 
-        {/* Read LifeTap — Primary Hero Button */}
+        {/* Read LifeTap — always available */}
         <TouchableOpacity
           className="rounded-3xl overflow-hidden mb-4 mt-10"
           style={{ height: 180 }}
@@ -108,7 +141,6 @@ export default function HomeScreen() {
             <View className="absolute top-4 right-4 opacity-40">
               <Text className="text-white text-lg">↻</Text>
             </View>
-
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
               <Image
                 style={{ width: 180, height: 180 }}
@@ -116,51 +148,65 @@ export default function HomeScreen() {
                 source={require('./../../assets/icons/read-nfc-icon.png')}
               />
             </View>
-
           </LinearGradient>
         </TouchableOpacity>
 
-        {/* Write to LifeTap */}
-        <TouchableOpacity
-          className="bg-white border border-teal-100 rounded-2xl flex-row items-center px-5 py-4 mb-3"
-          onPress={() => navigation.navigate('WriteNFC')}
-          activeOpacity={0.85}
-        >
-          <View className="w-10 h-10 rounded-xl bg-teal-50 items-center justify-center mr-4">
-            <Text className="text-xl">✏️</Text>
-          </View>
-          <Text className="text-teal-700 text-lg font-semibold">
-            Write to LifeTap
-          </Text>
-        </TouchableOpacity>
+        {/* Write to LifeTap — only if user exists */}
+        {hasUser && (
+          <TouchableOpacity
+            className="bg-white border border-teal-100 rounded-2xl flex-row items-center px-5 py-4 mb-3"
+            onPress={() => navigation.navigate('WriteNFC')}
+            activeOpacity={0.85}
+          >
+            <View className="w-10 h-10 rounded-xl bg-teal-50 items-center justify-center mr-4">
+              <Text className="text-xl">✏️</Text>
+            </View>
+            <Text className="text-teal-700 text-lg font-semibold">
+              Write to LifeTap
+            </Text>
+          </TouchableOpacity>
+        )}
 
-        {/* Sync and Upload to Cloud */}
-        <TouchableOpacity
-          className="bg-white border border-teal-100 rounded-2xl flex-row items-center px-5 py-4"
-          onPress={() => navigation.navigate('SyncOverlay')}
-          activeOpacity={0.85}
-        >
-          <View className="w-10 h-10 rounded-xl bg-teal-50 items-center justify-center mr-4">
-            <Text className="text-xl">☁️</Text>
-          </View>
-          <Text className="text-teal-700 text-lg font-semibold">
-            Sync and Upload to Cloud
-          </Text>
-        </TouchableOpacity>
+        {/* Sync and Upload to Cloud — only if user exists */}
+        {hasUser && (
+          <TouchableOpacity
+            className="bg-white border border-teal-100 rounded-2xl flex-row items-center px-5 py-4"
+            onPress={() => navigation.navigate('SyncOverlay')}
+            activeOpacity={0.85}
+          >
+            <View className="w-10 h-10 rounded-xl bg-teal-50 items-center justify-center mr-4">
+              <Text className="text-xl">☁️</Text>
+            </View>
+            <Text className="text-teal-700 text-lg font-semibold">
+              Sync and Upload to Cloud
+            </Text>
+          </TouchableOpacity>
+        )}
 
-        {/* Sync Status Card */}
-        <View className="bg-white rounded-2xl border border-4 border-teal-600 px-4 py-3 mb-4 flex-row items-center mt-4">
-          <Text className="text-xl mr-3">🔄</Text>
-          <View className="flex-1">
-            <Text className="text-sm font-semibold text-gray-800">{sync.label}</Text>
-            <Text className="text-xs text-gray-400 mt-0.5">{sync.sub}</Text>
+        {/* Sync Status Card — only if user exists */}
+        {hasUser && (
+          <View
+            className="bg-white rounded-2xl px-4 py-3 mb-4 flex-row items-center mt-4"
+            style={{
+              borderWidth: 2,
+              borderColor: syncStatus === 'NOT_SYNCED' ? '#dc2626' : '#0f766e',
+            }}
+          >
+            <Text className="text-xl mr-3">🔄</Text>
+            <View className="flex-1">
+              <Text className="text-sm font-semibold text-gray-800">{sync.label}</Text>
+              <Text className="text-xs text-gray-400 mt-0.5">{sync.sub}</Text>
+            </View>
+            {sync.action && sync.navigateTo && (
+              <TouchableOpacity
+                className={`${sync.actionBg} rounded-xl px-3 py-2`}
+                onPress={() => navigation.navigate(sync.navigateTo!)}
+              >
+                <Text className="text-xs font-bold text-white">{sync.action}</Text>
+              </TouchableOpacity>
+            )}
           </View>
-          {sync.action && (
-            <TouchableOpacity className={`${sync.actionBg} rounded-xl px-3 py-2`}>
-              <Text className="text-xs font-bold text-white">{sync.action}</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+        )}
 
       </ScrollView>
     </SafeAreaView>
