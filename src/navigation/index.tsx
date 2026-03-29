@@ -1,9 +1,9 @@
 import 'react-native-url-polyfill/auto';
-import React from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Image } from 'react-native';
+import { View, Image, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
 
 import HomeScreen from '../screens/HomeScreen';
 import ProfileScreen from '../screens/ProfileScreen';
@@ -16,73 +16,171 @@ import SuccessOverlay from '../screens/overlays/Success';
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
+const CIRCLE_SIZE = 54; // defined at module level so StyleSheet can use it
+
 const TAB_ICONS: Record<string, any> = {
-  Home:    require('./../../assets/icons/home-icon.png'),
-  Profile: require('./../../assets/icons/profile-icon.png'),
-  Account: require('./../../assets/icons/settings-icon.png'),
+  Profile: require('./../../assets/icons/profile.png'),
+  Home:    require('./../../assets/icons/home.png'),
+  Account: require('./../../assets/icons/settings.png'),
 };
 
-function TabIcon({ label, focused }: { label: string; focused: boolean }) {
+// ─────────────────────────────────────────────
+// CUSTOM TAB BAR
+// ─────────────────────────────────────────────
+
+function CustomTabBar({ state, descriptors, navigation }: any) {
+  const tabCount = state.routes.length;
+  const animatedValue = useRef(new Animated.Value(state.index)).current;
+  const [barWidth, setBarWidth] = useState(0); // ← moved inside component
+
+  const BAR_PADDING = 16;
+  const USABLE_WIDTH = barWidth - BAR_PADDING * 2;
+  const TAB_WIDTH = USABLE_WIDTH / tabCount;
+  const centerOffset = BAR_PADDING + (TAB_WIDTH - CIRCLE_SIZE) / 2;
+
+  useEffect(() => {
+    if (barWidth === 0) return;
+    Animated.spring(animatedValue, {
+      toValue: state.index,
+      useNativeDriver: true,
+      tension: 70,
+      friction: 10,
+    }).start();
+  }, [state.index, barWidth]);
+
+  const translateX = barWidth === 0
+  ? new Animated.Value(0)
+  : animatedValue.interpolate({
+      inputRange: state.routes.map((_: any, i: number) => i),
+      outputRange: state.routes.map((_: any, i: number) => (i * TAB_WIDTH) + centerOffset),
+    });
+
   return (
-    <View style={{
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginTop: 20,
-      borderRadius: 20,
-      width: 60,
-      height: 60,
-      paddingHorizontal: 16,
-      backgroundColor: focused ? '#ccfbf1' : 'transparent',
-    }}>
-      <Image
-        source={TAB_ICONS[label]}
-        style={{
-          width: 70,
-          height: 70,
-        }}
-        resizeMode="contain"
-      />
+    <View style={styles.wrapper}>
+      <View
+        style={styles.bar}
+        onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
+      >
+        {/* Sliding circle indicator */}
+        {barWidth > 0 && (
+          <Animated.View
+            style={[
+              styles.slidingCircle,
+              { transform: [{ translateX }] },
+            ]}
+          >
+            <View style={styles.circle} />
+          </Animated.View>
+        )}
+
+        {/* Tab buttons */}
+        {state.routes.map((route: any, index: number) => {
+          const focused = state.index === index;
+
+          function onPress() {
+            const event = navigation.emit({
+              type: 'tabPress',
+              target: route.key,
+              canPreventDefault: true,
+            });
+            if (!focused && !event.defaultPrevented) {
+              navigation.navigate(route.name);
+            }
+          }
+
+          return (
+            <TouchableOpacity
+              key={route.key}
+              onPress={onPress}
+              activeOpacity={0.8}
+              style={styles.tab}
+            >
+              <Image
+                source={TAB_ICONS[route.name]}
+                style={{
+                  width: route.name === 'Home' ? 32 : 28,
+                  height: route.name === 'Home' ? 32 : 28,
+                  tintColor: focused ? '#ffffff' : '#94a3b8',
+                }}
+                resizeMode="contain"
+              />
+            </TouchableOpacity>
+          );
+        })}
+      </View>
     </View>
   );
 }
 
+const styles = StyleSheet.create({
+  wrapper: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+    paddingHorizontal: 24,
+    backgroundColor: 'transparent',
+  },
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 28,
+    height: 68,
+    paddingHorizontal: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.10,
+    shadowRadius: 16,
+    elevation: 8,
+    overflow: 'hidden',
+  },
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+    zIndex: 10,
+  },
+  slidingCircle: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    width: CIRCLE_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  circle: {
+    width: CIRCLE_SIZE,
+    height: CIRCLE_SIZE,
+    borderRadius: CIRCLE_SIZE / 2,
+    backgroundColor: '#0d9488',
+  },
+});
+
+// ─────────────────────────────────────────────
+// TAB NAVIGATOR
+// ─────────────────────────────────────────────
+
 function TabNavigator() {
   return (
     <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarShowLabel: false,
-        tabBarStyle: {
-          height: 80,
-          paddingHorizontal: 16,
-          backgroundColor: '#ffffff',
-          borderTopWidth: 2,
-          borderTopColor: '#f0fdfa', // teal-50
-          shadowColor: '#000000',
-          shadowOffset: { width: 0, height: -15 },
-          shadowOpacity: 0.1,
-          shadowRadius: 20,
-        },
-      }}
+      tabBar={(props) => <CustomTabBar {...props} />}
+      screenOptions={{ headerShown: false }}
     >
-      <Tab.Screen
-        name="Home"
-        component={HomeScreen}
-        options={{ tabBarIcon: ({ focused }) => <TabIcon label="Home" focused={focused} /> }}
-      />
-      <Tab.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{ tabBarIcon: ({ focused }) => <TabIcon label="Profile" focused={focused} /> }}
-      />
-      <Tab.Screen
-        name="Account"
-        component={AccountScreen}
-        options={{ tabBarIcon: ({ focused }) => <TabIcon label="Account" focused={focused} /> }}
-      />
+      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Account" component={AccountScreen} />
     </Tab.Navigator>
   );
 }
+
+// ─────────────────────────────────────────────
+// ROOT NAVIGATOR
+// ─────────────────────────────────────────────
 
 export default function Navigation() {
   return (

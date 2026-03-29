@@ -128,7 +128,7 @@ export default function HomeScreen() {
         {/* Read LifeTap — always available */}
         <TouchableOpacity
           className="rounded-3xl overflow-hidden mb-4 mt-10"
-          style={{ height: 180 }}
+          style={{ height: 210 }}
           onPress={() => navigation.navigate('ReadNFC')}
           activeOpacity={0.85}
         >
@@ -147,6 +147,10 @@ export default function HomeScreen() {
                 resizeMode="contain"
                 source={require('./../../assets/icons/read-nfc-icon.png')}
               />
+
+              <Text>
+                Read LifeTap
+              </Text>
             </View>
           </LinearGradient>
         </TouchableOpacity>

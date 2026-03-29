@@ -38,10 +38,12 @@ function generateId(): string {
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <View className="bg-white rounded-2xl mb-3 overflow-hidden border border-slate-100">
-      <View className="bg-teal-700 px-4 py-2">
-        <Text className="text-white text-xs font-semibold uppercase tracking-widest">
-          {title}
-        </Text>
+      <View className="px-4 pt-3 pb-1">
+        <View className="self-start bg-teal-50 border border-teal-100 rounded-full px-3 py-1">
+          <Text className="text-teal-600 text-xs font-semibold uppercase tracking-wider">
+            {title}
+          </Text>
+        </View>
       </View>
       <View className="px-4 py-2">{children}</View>
     </View>
@@ -51,11 +53,10 @@ function SectionCard({ title, children }: { title: string; children: React.React
 function SectionItem({ label, last = false }: { label: string; last?: boolean }) {
   return (
     <View
-      className="flex-row items-center py-2"
-      style={!last ? { borderBottomWidth: 1, borderBottomColor: '#f8fafc' } : undefined}
+      className="py-3"
+      style={!last ? { borderBottomWidth: 1, borderBottomColor: '#f1f5f9' } : undefined}
     >
-      <View className="w-1.5 h-1.5 rounded-full bg-teal-500 mr-3" />
-      <Text className="text-slate-700 text-sm">{label}</Text>
+      <Text className="text-slate-600 text-sm leading-5">{label}</Text>
     </View>
   );
 }
