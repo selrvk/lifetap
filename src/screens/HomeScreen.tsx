@@ -88,7 +88,7 @@ export default function HomeScreen() {
       >
 
         {/* Logo */}
-        <View className="items-center mt-6 mb-5">
+        <View className="items-center mt-6 mb-4">
           <Image
             className="w-40 h-40"
             source={require('./../../assets/lifetap-logo-w-label.png')}
@@ -97,7 +97,7 @@ export default function HomeScreen() {
 
         {/* Welcome — or no profile banner */}
         {hasUser ? (
-          <View className="items-center mt-4">
+          <View className="items-center mt-4 ">
             <Text className="text-gray-400 text-sm">Welcome back,</Text>
             <Text className="text-gray-700 text-base font-semibold text-xl">
               {userName}
@@ -158,12 +158,16 @@ export default function HomeScreen() {
         {/* Write to LifeTap — only if user exists */}
         {hasUser && (
           <TouchableOpacity
-            className="bg-white border border-teal-100 rounded-2xl flex-row items-center px-5 py-4 mb-3"
+            className="bg-white border border-teal-100 rounded-2xl flex-row items-center px-5 py-4 mb-4"
             onPress={() => navigation.navigate('WriteNFC')}
             activeOpacity={0.85}
           >
             <View className="w-10 h-10 rounded-xl bg-teal-50 items-center justify-center mr-4">
-              <Text className="text-xl">✏️</Text>
+              <Image
+                style={{ width: 30, height: 30 }}
+                resizeMode="contain"
+                source={require('./../../assets/icons/pencil-icon.png')}
+              />
             </View>
             <Text className="text-teal-700 text-lg font-semibold">
               Write to LifeTap
@@ -174,12 +178,16 @@ export default function HomeScreen() {
         {/* Sync and Upload to Cloud — only if user exists */}
         {hasUser && (
           <TouchableOpacity
-            className="bg-white border border-teal-100 rounded-2xl flex-row items-center px-5 py-4"
+            className="bg-white border border-teal-100 rounded-2xl flex-row items-center px-5 py-4 mb-4"
             onPress={() => navigation.navigate('SyncOverlay')}
             activeOpacity={0.85}
           >
             <View className="w-10 h-10 rounded-xl bg-teal-50 items-center justify-center mr-4">
-              <Text className="text-xl">☁️</Text>
+              <Image
+                style={{ width: 30, height: 30 }}
+                resizeMode="contain"
+                source={require('./../../assets/icons/cloud-icon.png')}
+              />
             </View>
             <Text className="text-teal-700 text-lg font-semibold">
               Sync and Upload to Cloud
@@ -190,13 +198,17 @@ export default function HomeScreen() {
         {/* Sync Status Card — only if user exists */}
         {hasUser && (
           <View
-            className="bg-white rounded-2xl px-4 py-3 mb-4 flex-row items-center mt-4"
+            className="bg-white rounded-2xl px-5 py-4 mb-4 flex-row items-center"
             style={{
               borderWidth: 2,
               borderColor: syncStatus === 'NOT_SYNCED' ? '#dc2626' : '#0f766e',
             }}
           >
-            <Text className="text-xl mr-3">🔄</Text>
+            <Image
+                style={{ width: 30, height: 30, marginRight:18 }}
+                resizeMode="contain"
+                source={require('./../../assets/icons/refresh-icon.png')}
+              />
             <View className="flex-1">
               <Text className="text-sm font-semibold text-gray-800">{sync.label}</Text>
               <Text className="text-xs text-gray-400 mt-0.5">{sync.sub}</Text>
