@@ -168,6 +168,7 @@ function TabNavigator() {
     <Tab.Navigator
       tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{ headerShown: false }}
+      initialRouteName="Home"
     >
       <Tab.Screen name="Profile" component={ProfileScreen} />
       <Tab.Screen name="Home" component={HomeScreen} />
@@ -182,13 +183,13 @@ export default function Navigation() {
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         <Stack.Screen name="Main" component={TabNavigator} />
         <Stack.Screen name="ReadNFC" component={ReadNFCOverlay}
-          options={{ presentation: 'transparentModal' }} />
+          options={{ presentation: 'containedTransparentModal', animation: 'none' }} />
         <Stack.Screen name="WriteNFC" component={WriteNFCOverlay}
-          options={{ presentation: 'transparentModal' }} />
+          options={{ presentation: 'containedTransparentModal', animation: 'none' }} />
         <Stack.Screen name="SyncOverlay" component={SyncOverlay}
-          options={{ presentation: 'transparentModal' }} />
+          options={{ presentation: 'containedTransparentModal', animation: 'none' }} />
         <Stack.Screen name="Success" component={SuccessOverlay}
-          options={{ presentation: 'transparentModal' }} />
+          options={{ presentation: 'containedTransparentModal', animation: 'none' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -1,118 +1,312 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, Image, Animated } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  Image,
+  ScrollView,
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getLocalUser, markSyncedToTag, LocalUser } from '../../storage/asyncStorage';
+import { writeNfcTag, cancelNfc } from '../../services/nfc';
+import NFCSheet, { NFCSheetRef } from './../../components/NFCsheet';
+import { RippleRing, BouncingDot } from './../../components/NFCanimations';
 
-function RippleRing({ delay, size }: { delay: number; size: number }) {
-  const anim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.delay(delay),
-        Animated.timing(anim, {
-          toValue: 1,
-          duration: 2000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(anim, {
-          toValue: 0,
-          duration: 0,
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
-  }, []);
-
+function ConfirmStep({
+  user,
+  onConfirm,
+  onCancel,
+}: {
+  user: LocalUser;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
   return (
-    <Animated.View
-      style={{
-        position: 'absolute',
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        borderWidth: 2,
-        borderColor: '#0d9488',
-        opacity: anim.interpolate({ inputRange: [0, 0.1, 1], outputRange: [0, 0.8, 0] }),
-      }}
-    />
+    <>
+      <View className="w-12 h-1 bg-slate-200 rounded-full mb-6 self-center" />
+      <Text className="text-teal-900 text-lg font-bold mb-1">Write to LifeTap</Text>
+      <Text className="text-slate-400 text-sm mb-5">
+        The following data will be written to your tag
+      </Text>
+
+      <ScrollView
+        className="w-full mb-5"
+        style={{ maxHeight: 260 }}
+        showsVerticalScrollIndicator={false}
+      >
+        <View className="bg-teal-50 rounded-2xl p-4 mb-3">
+          <Text className="text-teal-700 text-xs font-semibold uppercase tracking-wider mb-2">
+            Identity
+          </Text>
+          <Text className="text-slate-700 text-sm font-semibold">{user.n}</Text>
+          <Text className="text-slate-400 text-xs mt-0.5">
+            {user.bt} · {user.dob} · {user.rel}
+          </Text>
+          <Text className="text-slate-400 text-xs mt-0.5">
+            {user.brg}, {user.cty}
+          </Text>
+          {user.od && (
+            <View className="bg-teal-100 rounded-lg px-2 py-0.5 self-start mt-2">
+              <Text className="text-teal-700 text-xs font-semibold">Organ Donor</Text>
+            </View>
+          )}
+        </View>
+
+        <View className="bg-teal-50 rounded-2xl p-4 mb-3">
+          <Text className="text-teal-700 text-xs font-semibold uppercase tracking-wider mb-2">
+            Medical
+          </Text>
+          <Text className="text-slate-500 text-xs">
+            Allergies: {user.a.length > 0 ? user.a.join(', ') : 'None'}
+          </Text>
+          <Text className="text-slate-500 text-xs mt-1">
+            Conditions: {user.c.length > 0 ? user.c.join(', ') : 'None'}
+          </Text>
+          <Text className="text-slate-500 text-xs mt-1">
+            Medications: {user.meds.length > 0 ? user.meds.join(', ') : 'None'}
+          </Text>
+        </View>
+
+        <View className="bg-teal-50 rounded-2xl p-4 mb-3">
+          <Text className="text-teal-700 text-xs font-semibold uppercase tracking-wider mb-2">
+            Emergency Contacts
+          </Text>
+          {user.kin.length === 0
+            ? <Text className="text-slate-400 text-xs">None</Text>
+            : user.kin.map((k, i) => (
+                <Text key={i} className="text-slate-500 text-xs mt-0.5">
+                  {k.n} ({k.r}) · {k.p}
+                </Text>
+              ))
+          }
+        </View>
+
+        <View
+          className="rounded-2xl p-3 mb-1"
+          style={{
+            backgroundColor: user.is_public ? '#f0fdfa' : '#fefce8',
+            borderWidth: 1,
+            borderColor: user.is_public ? '#99f6e4' : '#fde68a',
+          }}
+        >
+          <Text style={{ fontSize: 11, color: user.is_public ? '#0f766e' : '#92400e' }}>
+            {user.is_public
+              ? '🌐  Full profile visible to anyone who scans this tag'
+              : '🔒  Civilians see name & blood type only'}
+          </Text>
+        </View>
+      </ScrollView>
+
+      <TouchableOpacity
+        onPress={onConfirm}
+        className="bg-teal-600 w-full rounded-2xl py-4 items-center mb-3"
+        activeOpacity={0.85}
+      >
+        <Text className="text-white font-semibold">Write to LifeTap</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity onPress={onCancel}>
+        <Text className="text-red-400 font-semibold text-sm">Cancel</Text>
+      </TouchableOpacity>
+    </>
   );
 }
 
-function BouncingDot({ delay }: { delay: number }) {
-  const anim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.delay(delay),
-        Animated.timing(anim, { toValue: 1, duration: 400, useNativeDriver: true }),
-        Animated.timing(anim, { toValue: 0, duration: 400, useNativeDriver: true }),
-        Animated.delay(600),
-      ])
-    ).start();
-  }, []);
-
+function ScanningStep({ onCancel }: { onCancel: () => void }) {
   return (
-    <Animated.View
-      style={{
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: '#0f766e',
-        opacity: anim.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] }),
-        transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] }) }],
-      }}
-    />
+    <>
+      <View className="w-12 h-1 bg-slate-200 rounded-full mb-6 self-center" />
+
+      <View style={{
+        width: 160,
+        height: 160,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 28,
+        marginTop: 8,
+      }}>
+        <RippleRing delay={0}    size={120} />
+        <RippleRing delay={500}  size={140} />
+        <RippleRing delay={1000} size={160} />
+
+        <View style={{
+          width: 100,
+          height: 100,
+          borderRadius: 80,
+          backgroundColor: '#30726c',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10,
+        }}>
+          <Image
+            source={require('./../../../assets/icons/write-nfc.png')}
+            style={{ width: 80, height: 80 }}
+            resizeMode="contain"
+          />
+        </View>
+      </View>
+
+      <Text className="text-lg font-semibold text-teal-900 mb-1">Writing to LifeTap</Text>
+      <Text className="text-sm text-slate-400 mb-6">Hold your phone near the NFC tag</Text>
+
+      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 24 }}>
+        <BouncingDot delay={0} />
+        <BouncingDot delay={200} />
+        <BouncingDot delay={400} />
+      </View>
+
+      <TouchableOpacity onPress={onCancel}>
+        <Text className="text-red-400 font-semibold text-sm">Cancel</Text>
+      </TouchableOpacity>
+    </>
   );
 }
+
+function ResultStep({
+  success,
+  onDone,
+  onCancel,
+}: {
+  success: boolean;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <>
+      <View className="w-12 h-1 bg-slate-200 rounded-full mb-8 self-center" />
+
+      <View
+        className="w-20 h-20 rounded-full items-center justify-center mb-5"
+        style={{ backgroundColor: success ? '#f0fdfa' : '#fef2f2' }}
+      >
+        <Text style={{ fontSize: 36 }}>{success ? '✅' : '❌'}</Text>
+      </View>
+
+      <Text className="text-teal-900 text-lg font-bold mb-1">
+        {success ? 'Tag Updated' : 'Write Failed'}
+      </Text>
+      <Text className="text-slate-400 text-sm mb-8 text-center">
+        {success
+          ? 'Your LifeTap tag has been successfully updated with your latest info.'
+          : 'Something went wrong. Make sure the tag is held steady and try again.'}
+      </Text>
+
+      <TouchableOpacity
+        onPress={onDone}
+        className="w-full rounded-2xl py-4 items-center mb-3"
+        style={{ backgroundColor: '#0f766e' }}
+        activeOpacity={0.85}
+      >
+        <Text className="text-white font-semibold">
+          {success ? 'Done' : 'Try Again'}
+        </Text>
+      </TouchableOpacity>
+
+      {!success && (
+        <TouchableOpacity onPress={onCancel}>
+          <Text className="text-red-400 font-semibold text-sm">Close</Text>
+        </TouchableOpacity>
+      )}
+    </>
+  );
+}
+
+type Step = 'confirm' | 'scanning' | 'success' | 'error';
 
 export default function WriteNFC() {
   const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
+  const [step, setStep] = useState<Step>('confirm');
+  const [user, setUser] = useState<LocalUser | null>(null);
+  
+  const sheetRef = useRef<NFCSheetRef>(null);
+
+  useEffect(() => {
+    async function load() {
+      const data = await getLocalUser();
+      setUser(data);
+    }
+    load();
+  }, []);
+
+  async function handleWrite() {
+    if (!user) return;
+    setStep('scanning');
+
+    const payload = {
+      id: user.id,
+      n: user.n,
+      dob: user.dob,
+      bt: user.bt,
+      brg: user.brg,
+      cty: user.cty,
+      phn: user.phn,
+      rel: user.rel,
+      od: user.od,
+      a: user.a,
+      c: user.c,
+      meds: user.meds,
+      kin: user.kin,
+      is_public: user.is_public,
+      lastModified: user.lastModified,
+    };
+
+    const success = await writeNfcTag(payload);
+
+    if (success) {
+      await markSyncedToTag();
+      setStep('success');
+    } else {
+      setStep('error');
+    }
+  }
+
+  function triggerClose() {
+    sheetRef.current?.close();
+  }
+
+  async function finalizeClose() {
+    await cancelNfc();
+    navigation.goBack();
+  }
+
+  function handleDone() {
+    if (step === 'error') {
+      handleWrite();
+    } else {
+      triggerClose(); 
+    }
+  }
 
   return (
-    <View className="flex-1 bg-black/60 items-center justify-end">
-      <View
-        className="bg-white w-full rounded-t-3xl p-8 items-center"
-        style={{ paddingBottom: insets.bottom + 24 }}
-      >
-        {/* Ripple animation */}
-        <View style={{ width: 120, height: 120, alignItems: 'center', justifyContent: 'center', marginBottom: 40, marginTop: 20 }}>
-          <RippleRing delay={0}   size={120} />
-          <RippleRing delay={100} size={140} />
-          <RippleRing delay={200} size={160} />
-
-          <View style={{
-            width: 100,
-            height: 100,
-            borderRadius: 80,
-            backgroundColor: '#30726c',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10,
-          }}>
-            <Image
-              source={require('./../../../assets/icons/write-nfc.png')}
-              style={{ width: 80, height: 80 }}
-              resizeMode="contain"
+    <NFCSheet ref={sheetRef} onClose={finalizeClose}>
+      {!user && step === 'confirm' ? (
+        <>
+          <Text className="text-slate-400 text-sm mb-4">No local profile found.</Text>
+          <TouchableOpacity onPress={triggerClose}> 
+            <Text className="text-red-400 font-semibold text-sm">Close</Text>
+          </TouchableOpacity>
+        </>
+      ) : (
+        <>
+          {step === 'confirm' && user && (
+            <ConfirmStep
+              user={user}
+              onConfirm={handleWrite}
+              onCancel={triggerClose} 
             />
-          </View>
-        </View>
-
-        <Text className="text-lg font-semibold text-teal-900 mb-1">Writing to LifeTap</Text>
-        <Text className="text-sm text-slate-400 mb-6">Hold your phone near the NFC tag</Text>
-
-        <View style={{ flexDirection: 'row', gap: 6, marginBottom: 24 }}>
-          <BouncingDot delay={0} />
-          <BouncingDot delay={200} />
-          <BouncingDot delay={400} />
-        </View>
-
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text className="text-red-400 font-semibold text-sm">Cancel</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+          )}
+          {step === 'scanning' && (
+            <ScanningStep onCancel={triggerClose} /> 
+          )}
+          {(step === 'success' || step === 'error') && (
+            <ResultStep
+              success={step === 'success'}
+              onDone={handleDone}
+              onCancel={triggerClose} 
+            />
+          )}
+        </>
+      )}
+    </NFCSheet>
   );
 }
