@@ -11,8 +11,9 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
-import { saveLocalUser, getLocalUser, LocalUser, Kin } from '../storage/asyncStorage';
+import { saveLocalUser, getLocalUser, updateLocalUser, LocalUser, Kin } from '../storage/asyncStorage';
 
 // ─────────────────────────────────────────────
 // HELPERS
@@ -584,7 +585,142 @@ function OnboardingFlow({ onComplete }: { onComplete: () => void }) {
 // PROFILE VIEW (existing user)
 // ─────────────────────────────────────────────
 
-function ProfileView({ user }: { user: LocalUser }) {
+function ProfileView({ user, onUpdated }: { user: LocalUser; onUpdated: (u: LocalUser) => void }) {
+  const insets = useSafeAreaInsets();
+  const [editing, setEditing] = useState(false);
+  const [editStep, setEditStep] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    n: user.n,
+    dob: user.dob,
+    bt: user.bt,
+    rel: user.rel,
+    od: user.od,
+    brg: user.brg,
+    cty: user.cty,
+    phn: user.phn,
+    a: [...user.a],
+    c: [...user.c],
+    meds: [...user.meds],
+    kin: [...user.kin],
+    is_public: user.is_public,
+  });
+
+  function handleChange(key: string, value: any) {
+    setForm(prev => ({ ...prev, [key]: value }));
+  }
+
+  function handleStartEdit() {
+    // Reset form to current user data every time edit is opened
+    setForm({
+      n: user.n, dob: user.dob, bt: user.bt, rel: user.rel, od: user.od,
+      brg: user.brg, cty: user.cty, phn: user.phn,
+      a: [...user.a], c: [...user.c], meds: [...user.meds],
+      kin: [...user.kin], is_public: user.is_public,
+    });
+    setEditStep(0);
+    setEditing(true);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    const updated = await updateLocalUser(form);
+    setSaving(false);
+    if (updated) {
+      onUpdated(updated);
+      setEditing(false);
+    }
+  }
+
+  const STEPS = ['Personal', 'Address', 'Medical', 'Next of Kin', 'Privacy'];
+  const isLast = editStep === STEPS.length - 1;
+
+  const stepComponents = [
+    <StepPersonal data={form} onChange={handleChange} />,
+    <StepAddress data={form} onChange={handleChange} />,
+    <StepMedical data={form} onChange={handleChange} />,
+    <StepKin data={form} onChange={handleChange} />,
+    <StepPrivacy data={form} onChange={handleChange} />,
+  ];
+
+  // ── EDIT MODE ──
+  if (editing) {
+    return (
+      <SafeAreaView className="flex-1 bg-teal-50">
+        <KeyboardAvoidingView
+          className="flex-1"
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          {/* Progress bar */}
+          <View className="px-5 pt-4 pb-2">
+            <View className="flex-row items-center justify-between mb-2">
+              <TouchableOpacity onPress={() => setEditing(false)}>
+                <Text className="text-red-400 text-xs font-semibold">Cancel</Text>
+              </TouchableOpacity>
+              <Text className="text-xs text-teal-700 font-semibold">
+                {STEPS[editStep]}
+              </Text>
+              <Text className="text-xs text-slate-400">
+                {editStep + 1} / {STEPS.length}
+              </Text>
+            </View>
+            <View className="h-1.5 bg-teal-100 rounded-full overflow-hidden">
+              <View
+                className="h-full bg-teal-600 rounded-full"
+                style={{ width: `${((editStep + 1) / STEPS.length) * 100}%` }}
+              />
+            </View>
+          </View>
+
+          <ScrollView
+            className="flex-1"
+            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View className="mt-6">
+              {stepComponents[editStep]}
+            </View>
+          </ScrollView>
+
+          {/* Bottom nav */}
+          <View
+            className="flex-row px-5 bg-white border-t border-slate-100"
+            style={{
+              gap: 12,
+              paddingTop: 12,
+              paddingBottom: insets.bottom + 54 + 4,
+            }}
+          >
+            {editStep > 0 && (
+              <TouchableOpacity
+                onPress={() => setEditStep(s => s - 1)}
+                className="flex-1 border border-teal-200 rounded-2xl py-4 items-center"
+                activeOpacity={0.85}
+              >
+                <Text className="text-teal-700 font-semibold">Back</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              onPress={isLast ? handleSave : () => setEditStep(s => s + 1)}
+              className="flex-1 bg-teal-600 rounded-2xl py-4 items-center"
+              activeOpacity={0.85}
+              disabled={saving}
+            >
+              {saving
+                ? <ActivityIndicator color="white" />
+                : <Text className="text-white font-semibold">
+                    {isLast ? 'Save Changes' : 'Next'}
+                  </Text>
+              }
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    );
+  }
+
+  // ── VIEW MODE ──
   return (
     <SafeAreaView className="flex-1 bg-teal-50">
       <ScrollView
@@ -605,11 +741,19 @@ function ProfileView({ user }: { user: LocalUser }) {
               <Text className="text-slate-400 text-xs mt-0.5">ID: {user.id}</Text>
             </View>
             {user.od && (
-              <View className="bg-teal-50 border border-teal-200 rounded-lg px-2 py-1">
+              <View className="bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 mr-2">
                 <Text className="text-teal-700 text-xs font-semibold">Organ Donor</Text>
               </View>
             )}
+            {/* Edit button */}
+            <TouchableOpacity
+              onPress={handleStartEdit}
+              className="bg-teal-50 border border-teal-200 rounded-lg px-3 py-1"
+            >
+              <Text className="text-teal-700 text-xs font-semibold">Edit</Text>
+            </TouchableOpacity>
           </View>
+
           <View className="flex-row mt-4" style={{ gap: 8 }}>
             <View className="flex-1 bg-teal-50 rounded-xl py-2 items-center">
               <Text className="text-teal-700 text-sm font-semibold">{user.bt}</Text>
@@ -772,5 +916,5 @@ export default function ProfileScreen() {
     return <OnboardingFlow onComplete={handleOnboardingComplete} />;
   }
 
-  return <ProfileView user={user!} />;
+  return <ProfileView user={user!} onUpdated={(updated) => setUser(updated)} />;
 }

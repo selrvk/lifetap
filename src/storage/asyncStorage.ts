@@ -50,6 +50,25 @@ export type AppSettings = {
 };
 
 // ================================================
+// CLOUD SESSION
+// Stores Supabase auth session after OTP login
+// ================================================
+
+export type CloudSession = {
+  access_token: string;
+  refresh_token: string;
+  phone: string;
+  user_id: string;
+  expires_at: number;         // Unix timestamp
+  // Personnel fields — null if civilian
+  role: 'medic' | 'responder' | 'admin' | null;
+  full_name: string | null;
+  city: string | null;
+  badge_no: string | null;
+  organization: string | null;
+};
+
+// ================================================
 // KEYS
 // ================================================
 
@@ -57,7 +76,60 @@ const KEYS = {
   USER_PROFILE:      'lifetap:user_profile',
   PERSONNEL_SESSION: 'lifetap:personnel_session',
   APP_SETTINGS:      'lifetap:app_settings',
+  CLOUD_SESSION:     'lifetap:cloud_session',   // ← add this
 } as const;
+
+// ================================================
+// CLOUD SESSION
+// ================================================
+
+export async function getCloudSession(): Promise<CloudSession | null> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.CLOUD_SESSION);
+    if (!raw) return null;
+
+    const session: CloudSession = JSON.parse(raw);
+
+    // Check if session is expired
+    if (Date.now() > session.expires_at) {
+      await clearCloudSession();
+      return null;
+    }
+
+    return session;
+  } catch (e) {
+    console.error('getCloudSession error:', e);
+    return null;
+  }
+}
+
+export async function saveCloudSession(session: CloudSession): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.CLOUD_SESSION, JSON.stringify(session));
+  } catch (e) {
+    console.error('saveCloudSession error:', e);
+  }
+}
+
+export async function clearCloudSession(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(KEYS.CLOUD_SESSION);
+  } catch (e) {
+    console.error('clearCloudSession error:', e);
+  }
+}
+
+// Convenience — check if logged in without fetching full session
+export async function isLoggedIn(): Promise<boolean> {
+  const session = await getCloudSession();
+  return session !== null;
+}
+
+// Convenience — check if logged in user is personnel
+export async function isPersonnel(): Promise<boolean> {
+  const session = await getCloudSession();
+  return session !== null && session.role !== null;
+}
 
 // ================================================
 // USER PROFILE
@@ -225,8 +297,10 @@ export async function getSyncStatus(): Promise<SyncStatus> {
   const user = await getLocalUser();
   if (!user) return 'NOT_SYNCED';
 
-  if (!user.syncedToTag && !user.syncedToCloud) return 'NOT_SYNCED';
+  const loggedIn = await isLoggedIn();
+
+  if (!user.syncedToTag && (!user.syncedToCloud || !loggedIn)) return 'NOT_SYNCED';
   if (!user.syncedToTag) return 'TAG_BEHIND';
-  if (!user.syncedToCloud) return 'CLOUD_BEHIND';
+  if (!user.syncedToCloud && loggedIn) return 'CLOUD_BEHIND';
   return 'IN_SYNC';
 }

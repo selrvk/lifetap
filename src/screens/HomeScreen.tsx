@@ -12,7 +12,9 @@ import LinearGradient from 'react-native-linear-gradient';
 import {
   getLocalUser,
   getSyncStatus,
+  getCloudSession,
   SyncStatus,
+  CloudSession,
 } from '../storage/asyncStorage';
 
 const SYNC_CONFIG: Record<SyncStatus, {
@@ -55,14 +57,18 @@ export default function HomeScreen() {
   const [userName, setUserName] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('IN_SYNC');
   const [hasUser, setHasUser] = useState<boolean>(false);
+  const [session, setSession] = useState<CloudSession | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       async function load() {
-        const [user, status] = await Promise.all([
+        const [user, status, cloudSession] = await Promise.all([
           getLocalUser(),
           getSyncStatus(),
+          getCloudSession(),
         ]);
+
+        setSession(cloudSession);
 
         if (user) {
           setHasUser(true);
@@ -97,7 +103,7 @@ export default function HomeScreen() {
 
         {/* Welcome — or no profile banner */}
         {hasUser ? (
-          <View className="items-center mt-4 ">
+          <View className="items-center mt-4">
             <Text className="text-gray-400 text-sm">Welcome back,</Text>
             <Text className="text-gray-700 text-base font-semibold text-xl">
               {userName}
@@ -147,8 +153,7 @@ export default function HomeScreen() {
                 resizeMode="contain"
                 source={require('./../../assets/icons/read-nfc-icon.png')}
               />
-
-              <Text className='text-white text-2xl my-2 font-bold'>
+              <Text className="text-white text-2xl my-2 font-bold">
                 Read LifeTap
               </Text>
             </View>
@@ -175,24 +180,60 @@ export default function HomeScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Sync and Upload to Cloud — only if user exists */}
+        {/* Cloud button — changes based on login state */}
         {hasUser && (
-          <TouchableOpacity
-            className="bg-white border border-teal-100 rounded-2xl flex-row items-center px-5 py-4 mb-4"
-            onPress={() => navigation.navigate('SyncOverlay')}
-            activeOpacity={0.85}
-          >
-            <View className="w-10 h-10 rounded-xl bg-teal-50 items-center justify-center mr-4">
-              <Image
-                style={{ width: 30, height: 30 }}
-                resizeMode="contain"
-                source={require('./../../assets/icons/cloud-icon.png')}
-              />
-            </View>
-            <Text className="text-teal-700 text-lg font-semibold">
-              Sync and Upload to Cloud
-            </Text>
-          </TouchableOpacity>
+          session ? (
+            // Logged in — show upload button
+            <TouchableOpacity
+              className="bg-white border border-teal-100 rounded-2xl flex-row items-center px-5 py-4 mb-4"
+              onPress={() => navigation.navigate('SyncOverlay')}
+              activeOpacity={0.85}
+            >
+              <View className="w-10 h-10 rounded-xl bg-teal-50 items-center justify-center mr-4">
+                <Image
+                  style={{ width: 30, height: 30 }}
+                  resizeMode="contain"
+                  source={require('./../../assets/icons/cloud-icon.png')}
+                />
+              </View>
+              <View className="flex-1">
+                <Text className="text-teal-700 text-lg font-semibold">
+                  Sync and Upload to Cloud
+                </Text>
+                {session.full_name && (
+                  <Text className="text-slate-400 text-xs mt-0.5">
+                    Signed in as {session.full_name}
+                  </Text>
+                )}
+              </View>
+            </TouchableOpacity>
+          ) : (
+            // Not logged in — show login prompt
+            <TouchableOpacity
+              className="bg-white border border-slate-200 rounded-2xl flex-row items-center px-5 py-4 mb-4"
+              onPress={() => navigation.navigate('Settings')}
+              activeOpacity={0.85}
+            >
+              <View className="w-10 h-10 rounded-xl bg-slate-100 items-center justify-center mr-4">
+                <Image
+                  style={{ width: 30, height: 30, opacity: 0.4 }}
+                  resizeMode="contain"
+                  source={require('./../../assets/icons/cloud-icon.png')}
+                />
+              </View>
+              <View className="flex-1">
+                <Text className="text-slate-400 text-lg font-semibold">
+                  Upload to Cloud
+                </Text>
+                <Text className="text-slate-300 text-xs mt-0.5">
+                  Sign in to enable cloud sync
+                </Text>
+              </View>
+              <View className="bg-teal-50 border border-teal-200 rounded-xl px-3 py-1.5">
+                <Text className="text-teal-700 text-xs font-bold">LOGIN</Text>
+              </View>
+            </TouchableOpacity>
+          )
         )}
 
         {/* Sync Status Card — only if user exists */}
@@ -205,10 +246,10 @@ export default function HomeScreen() {
             }}
           >
             <Image
-                style={{ width: 30, height: 30, marginRight:18 }}
-                resizeMode="contain"
-                source={require('./../../assets/icons/refresh-icon.png')}
-              />
+              style={{ width: 30, height: 30, marginRight: 18 }}
+              resizeMode="contain"
+              source={require('./../../assets/icons/refresh-icon.png')}
+            />
             <View className="flex-1">
               <Text className="text-sm font-semibold text-gray-800">{sync.label}</Text>
               <Text className="text-xs text-gray-400 mt-0.5">{sync.sub}</Text>
