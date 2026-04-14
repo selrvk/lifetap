@@ -83,12 +83,12 @@ function LoginSheet({ onSuccess, onCancel }: {
   onSuccess: (session: CloudSession) => void;
   onCancel: () => void;
 }) {
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [step, setStep] = useState<LoginStep>('phone');
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // Format phone to E.164 (+63 format)
   function formatPhone(raw: string): string {
     const digits = raw.replace(/\D/g, '');
     if (digits.startsWith('0')) return '+63' + digits.slice(1);
@@ -158,7 +158,7 @@ function LoginSheet({ onSuccess, onCancel }: {
       refresh_token: data.session.refresh_token,
       phone: formatted,
       user_id: data.session.user.id,
-      expires_at: (data.session.expires_at ?? 0) * 1000, // convert to ms
+      expires_at: (data.session.expires_at ?? 0) * 1000,
       role: personnelData?.role ?? null,
       full_name: personnelData?.full_name ?? null,
       city: personnelData?.city ?? null,
@@ -168,6 +168,12 @@ function LoginSheet({ onSuccess, onCancel }: {
 
     await saveCloudSession(session);
     onSuccess(session);
+  }
+
+  function handleReset() {
+    setStep('phone');
+    setOtp('');
+    setError(null);
   }
 
   if (step === 'loading') {
@@ -182,9 +188,11 @@ function LoginSheet({ onSuccess, onCancel }: {
   if (step === 'otp') {
     return (
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <Text className="text-teal-900 text-lg font-bold mb-1">Enter OTP</Text>
+        <Text className="text-teal-900 text-lg font-bold mb-1">
+          Enter OTP
+        </Text>
         <Text className="text-slate-400 text-sm mb-6">
-          We sent a code to {formatPhone(phone)}
+          We sent a 6-digit code to {formatPhone(phone)}
         </Text>
 
         <View className="bg-teal-50 border border-teal-100 rounded-2xl px-4 py-3 mb-4">
@@ -194,7 +202,7 @@ function LoginSheet({ onSuccess, onCancel }: {
           <TextInput
             value={otp}
             onChangeText={setOtp}
-            placeholder="e.g. 123456"
+            placeholder="123456"
             placeholderTextColor="#cbd5e1"
             keyboardType="number-pad"
             maxLength={6}
@@ -212,10 +220,12 @@ function LoginSheet({ onSuccess, onCancel }: {
           className="bg-teal-600 rounded-2xl py-4 items-center mb-3"
           activeOpacity={0.85}
         >
-          <Text className="text-white font-semibold">Verify</Text>
+          <Text className="text-white font-semibold">
+            {mode === 'signup' ? 'Create Account' : 'Sign In'}
+          </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity onPress={() => { setStep('phone'); setOtp(''); setError(null); }}>
+        <TouchableOpacity onPress={handleReset}>
           <Text className="text-slate-400 text-sm text-center">
             Wrong number? Go back
           </Text>
@@ -227,9 +237,37 @@ function LoginSheet({ onSuccess, onCancel }: {
   // step === 'phone'
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <Text className="text-teal-900 text-lg font-bold mb-1">Sign In to Cloud</Text>
+
+      {/* Mode toggle */}
+      <View className="flex-row bg-teal-50 rounded-xl p-1 mb-6" style={{ gap: 4 }}>
+        {(['signin', 'signup'] as const).map(m => {
+          const active = mode === m;
+          return (
+            <TouchableOpacity
+              key={m}
+              onPress={() => { setMode(m); setError(null); }}
+              className="flex-1 items-center py-2 rounded-lg"
+              style={{ backgroundColor: active ? '#0f766e' : 'transparent' }}
+              activeOpacity={0.8}
+            >
+              <Text
+                className="text-sm font-semibold"
+                style={{ color: active ? '#ffffff' : '#94a3b8' }}
+              >
+                {m === 'signin' ? 'Sign In' : 'Sign Up'}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <Text className="text-teal-900 text-lg font-bold mb-1">
+        {mode === 'signin' ? 'Sign In to Cloud' : 'Create Cloud Account'}
+      </Text>
       <Text className="text-slate-400 text-sm mb-6">
-        Enter your phone number to receive a one-time code
+        {mode === 'signin'
+          ? 'Enter your phone number to receive a one-time sign in code'
+          : 'Enter your phone number to create a LifeTap cloud account'}
       </Text>
 
       <View className="bg-teal-50 border border-teal-100 rounded-2xl px-4 py-3 mb-4">
@@ -247,6 +285,14 @@ function LoginSheet({ onSuccess, onCancel }: {
         />
       </View>
 
+      {mode === 'signup' && (
+        <View className="bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 mb-4">
+          <Text className="text-amber-700 text-xs leading-5">
+            📋  A cloud account lets you back up your medical profile and restore it on any device. Personnel accounts are created by administrators only.
+          </Text>
+        </View>
+      )}
+
       {error && (
         <Text className="text-red-400 text-xs mb-4">{error}</Text>
       )}
@@ -256,7 +302,9 @@ function LoginSheet({ onSuccess, onCancel }: {
         className="bg-teal-600 rounded-2xl py-4 items-center mb-3"
         activeOpacity={0.85}
       >
-        <Text className="text-white font-semibold">Send Code</Text>
+        <Text className="text-white font-semibold">
+          {mode === 'signin' ? 'Send Code' : 'Create Account'}
+        </Text>
       </TouchableOpacity>
 
       <TouchableOpacity onPress={onCancel}>

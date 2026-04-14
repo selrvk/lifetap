@@ -408,6 +408,7 @@ export default function SyncOverlay() {
         meds: localUser.meds,
         kin: localUser.kin,
         is_public: localUser.is_public,
+        owner_id: session.user_id,
         updated_at: new Date(localUser.lastModified).toISOString(),
       });
 
