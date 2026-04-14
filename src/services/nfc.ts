@@ -1,4 +1,4 @@
-import NfcManager, { NfcTech, Ndef } from 'react-native-nfc-manager';
+import NfcManager, { NfcTech, Ndef, NfcAHandler } from 'react-native-nfc-manager';
 
 // Call once at app startup in App.tsx
 export async function initNfc(): Promise<boolean> {

@@ -1,13 +1,31 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { readNfcTag, cancelNfc } from '../../services/nfc';
 import NFCSheet, { NFCSheetRef } from './../../components/NFCsheet'; 
 import { RippleRing, BouncingDot } from './../../components/NFCanimations';
 
 export default function ReadNFC() {
   const navigation = useNavigation();
-  // 2. Create the ref
   const sheetRef = useRef<NFCSheetRef>(null);
+
+  useEffect(() => {
+    startScan();
+
+    return () => {
+      cancelNfc();
+    };
+  }, []);
+
+  async function startScan() {
+  const data = await readNfcTag();
+
+    if (data) {
+      navigation.replace('NFCResult', { data });
+    } else {
+      navigation.goBack();
+    }
+}
 
   return (
     <NFCSheet ref={sheetRef} onClose={() => navigation.goBack()}>

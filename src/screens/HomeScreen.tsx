@@ -206,7 +206,7 @@ export default function HomeScreen() {
                   </Text>
                 )}
               </View>
-            </TouchableOpacity>
+            </TouchableOpacity> 
           ) : (
             // Not logged in — show login prompt
             <TouchableOpacity

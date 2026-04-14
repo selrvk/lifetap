@@ -4,6 +4,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View, Image, TouchableOpacity, StyleSheet, Platform, Animated, Text } from 'react-native';
+import NFCResultScreen from '../screens/NFCResultScreen';
 
 import HomeScreen from '../screens/HomeScreen';
 import ProfileScreen from '../screens/ProfileScreen';
@@ -189,6 +190,11 @@ export default function Navigation() {
           options={{ presentation: 'containedTransparentModal', animation: 'none' }} />
         <Stack.Screen name="Success" component={SuccessOverlay}
           options={{ presentation: 'containedTransparentModal', animation: 'none' }} />
+          <Stack.Screen
+            name="NFCResult"
+            component={NFCResultScreen}
+            options={{ presentation: 'containedTransparentModal', animation: 'none' }}
+          />
       </Stack.Navigator>
     </NavigationContainer>
   );

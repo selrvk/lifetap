@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   View,
   Text,
@@ -21,11 +22,11 @@ import {
   getCloudSession,
   saveCloudSession,
   clearCloudSession,
+  clearLocalUser,
   LocalUser,
   AppSettings,
   CloudSession,
 } from '../storage/asyncStorage';
-
 type LockMethod = 'faceid' | 'pin';
 type LoginStep = 'phone' | 'otp' | 'loading';
 
@@ -265,11 +266,14 @@ function LoginSheet({ onSuccess, onCancel }: {
   );
 }
 
+
+
 // ─────────────────────────────────────────────
 // MAIN SCREEN
 // ─────────────────────────────────────────────
 
 export default function AccountScreen() {
+  const insets = useSafeAreaInsets();
   const [user, setUser] = useState<LocalUser | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [session, setSession] = useState<CloudSession | null>(null);
@@ -360,12 +364,47 @@ export default function AccountScreen() {
     );
   }
 
+  async function handleClearLocalData() {
+    // First prompt — warn about data loss
+    Alert.alert(
+      'Clear Local Data',
+      user?.syncedToCloud
+        ? 'This will remove all your locally stored profile data from this device. Your data is backed up to the cloud and can be restored by signing in again.'
+        : '⚠️ Your data is NOT backed up to the cloud.\n\nIf you continue, your profile, medical info, and emergency contacts will be permanently deleted from this device with no way to recover them.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: user?.syncedToCloud ? 'default' : 'destructive',
+          onPress: () => {
+            // Second prompt — final confirmation
+            Alert.alert(
+              'Are you absolutely sure?',
+              'This action cannot be undone. All local profile data will be permanently deleted from this device.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete My Data',
+                  style: 'destructive',
+                  onPress: async () => {
+                    await clearLocalUser();
+                    setUser(null);
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  }
+
   // ── MAIN ACCOUNT VIEW ──
   return (
     <SafeAreaView className="flex-1 bg-teal-50">
       <ScrollView
         className="flex-1"
-        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 54 + 16 }}
         showsVerticalScrollIndicator={false}
       >
         <Text className="text-teal-900 text-2xl font-bold mt-6 mb-4">Account</Text>
@@ -574,6 +613,43 @@ export default function AccountScreen() {
             </SettingsCard>
           </>
         )}
+
+        {/* Danger Zone */}
+          {user && (
+            <>
+              <SectionLabel title="Data" />
+              <SettingsCard>
+                <View className="px-4 py-4">
+                  <Text className="text-slate-500 text-xs mb-3 leading-5">
+                    {user.syncedToCloud
+                      ? 'Your data is backed up to the cloud. You can safely clear local data and restore it by signing in again.'
+                      : 'Your data is only stored locally on this device. Clearing it without a cloud backup will permanently delete your profile.'}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={handleClearLocalData}
+                    className="rounded-2xl py-3 items-center border"
+                    style={{
+                      borderColor: user.syncedToCloud ? '#fca5a5' : '#ef4444',
+                      backgroundColor: user.syncedToCloud ? '#fff1f2' : '#fef2f2',
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Text
+                      className="text-sm font-semibold"
+                      style={{ color: user.syncedToCloud ? '#dc2626' : '#b91c1c' }}
+                    >
+                      Clear Local Data
+                    </Text>
+                    {!user.syncedToCloud && (
+                      <Text className="text-xs mt-0.5" style={{ color: '#ef4444' }}>
+                        ⚠️ Not backed up — data will be lost
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </SettingsCard>
+            </>
+          )}
 
         {/* About */}
         <SectionLabel title="About" />

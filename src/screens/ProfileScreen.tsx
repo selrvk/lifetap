@@ -474,6 +474,7 @@ function GateScreen({ onNewUser, onExistingUser }: {
 const STEPS = ['Personal', 'Address', 'Medical', 'Next of Kin', 'Privacy'];
 
 function OnboardingFlow({ onComplete }: { onComplete: () => void }) {
+  const insets = useSafeAreaInsets(); // ← add this
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -538,7 +539,7 @@ function OnboardingFlow({ onComplete }: { onComplete: () => void }) {
 
         <ScrollView
           className="flex-1"
-          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}
+          contentContainerStyle={{ paddingHorizontal: 20 }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
@@ -550,7 +551,10 @@ function OnboardingFlow({ onComplete }: { onComplete: () => void }) {
         {/* Bottom nav */}
         <View
           className="flex-row px-5 py-4 bg-white border-t border-slate-100"
-          style={{ gap: 12 }}
+          style={{ gap: 12,
+                  paddingTop: 12,
+                  paddingBottom: insets.bottom + 54 + 4, 
+           }}
         >
           {step > 0 && (
             <TouchableOpacity
@@ -674,7 +678,7 @@ function ProfileView({ user, onUpdated }: { user: LocalUser; onUpdated: (u: Loca
 
           <ScrollView
             className="flex-1"
-            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}
+            contentContainerStyle={{ paddingHorizontal: 20 }}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
@@ -725,7 +729,7 @@ function ProfileView({ user, onUpdated }: { user: LocalUser; onUpdated: (u: Loca
     <SafeAreaView className="flex-1 bg-teal-50">
       <ScrollView
         className="flex-1"
-        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 54 + 16 }}
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}

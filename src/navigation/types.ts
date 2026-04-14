@@ -10,4 +10,5 @@ export type TabParamList = {
   Home: undefined;
   Profile: undefined;
   Account: undefined;
+  NFCResult: { data: any };
 };
