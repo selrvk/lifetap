@@ -2,12 +2,14 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { readNfcTag, cancelNfc } from '../../services/nfc';
-import NFCSheet, { NFCSheetRef } from './../../components/NFCsheet'; 
+import NFCSheet, { NFCSheetRef } from './../../components/NFCsheet';
 import { RippleRing, BouncingDot } from './../../components/NFCanimations';
+import { useApp } from '../../context/AppContext';
 
 export default function ReadNFC() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const sheetRef = useRef<NFCSheetRef>(null);
+  const { activeReport } = useApp();
 
   useEffect(() => {
     startScan();
@@ -18,14 +20,17 @@ export default function ReadNFC() {
   }, []);
 
   async function startScan() {
-  const data = await readNfcTag();
+    const data = await readNfcTag();
 
     if (data) {
-      navigation.replace('NFCResult', { data });
+      navigation.replace('NFCResult', {
+        data,
+        fromReport: activeReport?.name ?? null,
+      });
     } else {
       navigation.goBack();
     }
-}
+  }
 
   return (
     <NFCSheet ref={sheetRef} onClose={() => navigation.goBack()}>

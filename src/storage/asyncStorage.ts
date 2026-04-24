@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { Report, ReportEntry } from '../types/responder';
 
 // ================================================
 // TYPES
@@ -76,7 +77,9 @@ const KEYS = {
   USER_PROFILE:      'lifetap:user_profile',
   PERSONNEL_SESSION: 'lifetap:personnel_session',
   APP_SETTINGS:      'lifetap:app_settings',
-  CLOUD_SESSION:     'lifetap:cloud_session',   // ← add this
+  CLOUD_SESSION:     'lifetap:cloud_session',
+  REPORTS:           '@lifetap_reports',
+  ACTIVE_REPORT:     '@lifetap_active_report',
 } as const;
 
 // ================================================
@@ -303,4 +306,115 @@ export async function getSyncStatus(): Promise<SyncStatus> {
   if (!user.syncedToTag) return 'TAG_BEHIND';
   if (!user.syncedToCloud && loggedIn) return 'CLOUD_BEHIND';
   return 'IN_SYNC';
+}
+
+// ================================================
+// RESPONDER REPORTS
+// ================================================
+
+export async function getAllReports(): Promise<Report[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.REPORTS);
+    return raw ? (JSON.parse(raw) as Report[]) : [];
+  } catch (e) {
+    console.error('getAllReports error:', e);
+    return [];
+  }
+}
+
+async function writeAllReports(reports: Report[]): Promise<void> {
+  await AsyncStorage.setItem(KEYS.REPORTS, JSON.stringify(reports));
+}
+
+export async function getReportById(id: string): Promise<Report | null> {
+  const all = await getAllReports();
+  return all.find((r) => r.id === id) ?? null;
+}
+
+export async function saveReport(report: Report): Promise<void> {
+  const all = await getAllReports();
+  const idx = all.findIndex((r) => r.id === report.id);
+  if (idx >= 0) all[idx] = report;
+  else all.push(report);
+  await writeAllReports(all);
+}
+
+export async function updateReport(report: Report): Promise<void> {
+  await saveReport(report);
+}
+
+export async function deleteReport(id: string): Promise<void> {
+  const all = await getAllReports();
+  await writeAllReports(all.filter((r) => r.id !== id));
+  const active = await getActiveReport();
+  if (active?.id === id) await setActiveReport(null);
+}
+
+export async function getActiveReport(): Promise<Report | null> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.ACTIVE_REPORT);
+    return raw ? (JSON.parse(raw) as Report) : null;
+  } catch (e) {
+    console.error('getActiveReport error:', e);
+    return null;
+  }
+}
+
+export async function setActiveReport(report: Report | null): Promise<void> {
+  try {
+    if (report) {
+      const all = await getAllReports();
+      const updated = all.map((r) => ({ ...r, isActive: r.id === report.id }));
+      const exists = updated.some((r) => r.id === report.id);
+      if (!exists) updated.push({ ...report, isActive: true });
+      await writeAllReports(updated);
+      await AsyncStorage.setItem(
+        KEYS.ACTIVE_REPORT,
+        JSON.stringify({ ...report, isActive: true })
+      );
+    } else {
+      const all = await getAllReports();
+      const updated = all.map((r) => ({ ...r, isActive: false }));
+      await writeAllReports(updated);
+      await AsyncStorage.removeItem(KEYS.ACTIVE_REPORT);
+    }
+  } catch (e) {
+    console.error('setActiveReport error:', e);
+  }
+}
+
+export async function addEntryToReport(
+  reportId: string,
+  entry: ReportEntry
+): Promise<Report | null> {
+  const all = await getAllReports();
+  const idx = all.findIndex((r) => r.id === reportId);
+  if (idx < 0) return null;
+
+  const updated: Report = {
+    ...all[idx],
+    entries: [...all[idx].entries, entry],
+    syncedToCloud: false,
+  };
+  all[idx] = updated;
+  await writeAllReports(all);
+
+  const active = await getActiveReport();
+  if (active?.id === reportId) {
+    await AsyncStorage.setItem(KEYS.ACTIVE_REPORT, JSON.stringify(updated));
+  }
+  return updated;
+}
+
+export async function markReportSynced(id: string): Promise<void> {
+  const report = await getReportById(id);
+  if (!report) return;
+  await saveReport({ ...report, syncedToCloud: true });
+  const active = await getActiveReport();
+  if (active?.id === id) {
+    await AsyncStorage.setItem(
+      KEYS.ACTIVE_REPORT,
+      JSON.stringify({ ...report, syncedToCloud: true })
+    );
+  }
 }

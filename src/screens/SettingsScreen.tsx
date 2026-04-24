@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
+import { useApp } from '../context/AppContext';
 import {
   getLocalUser,
   getAppSettings,
@@ -327,6 +328,7 @@ export default function AccountScreen() {
   const [session, setSession] = useState<CloudSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [showLogin, setShowLogin] = useState(false);
+  const { refreshSession } = useApp();
 
   useFocusEffect(
     useCallback(() => {
@@ -370,8 +372,9 @@ export default function AccountScreen() {
           text: 'Sign Out',
           style: 'destructive',
           onPress: async () => {
-            await supabase.auth.signOut();
             await clearCloudSession();
+            await supabase.auth.signOut();
+            await refreshSession();
             setSession(null);
           },
         },
@@ -379,9 +382,10 @@ export default function AccountScreen() {
     );
   }
 
-  function handleLoginSuccess(newSession: CloudSession) {
+  async function handleLoginSuccess(newSession: CloudSession) {
     setSession(newSession);
     setShowLogin(false);
+    await refreshSession();
   }
 
   if (loading) {

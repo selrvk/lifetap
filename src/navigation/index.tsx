@@ -13,6 +13,12 @@ import ReadNFCOverlay from '../screens/overlays/ReadNFC';
 import WriteNFCOverlay from '../screens/overlays/WriteNFC';
 import SyncOverlay from '../screens/overlays/Sync';
 import SuccessOverlay from '../screens/overlays/Success';
+import ResponderScanScreen from '../screens/responder/ScanScreen';
+import ReportsScreen from '../screens/responder/ReportsScreen';
+import ResponderSettingsScreen from '../screens/responder/SettingsScreen';
+import NewReportScreen from '../screens/responder/NewReportScreen';
+import ReportDetailScreen from '../screens/responder/ReportDetailScreen';
+import { useApp } from '../context/AppContext';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -21,6 +27,8 @@ const TAB_ICONS: Record<string, any> = {
   Profile: require('./../../assets/icons/profile.png'),
   Home:    require('./../../assets/lifetap-logo.png'),
   Settings: require('./../../assets/icons/settings.png'),
+  Scan:    require('./../../assets/icons/read-nfc-icon.png'),
+  Reports: require('./../../assets/icons/pencil-icon.png'),
 };
 
 function CustomTabBar({ state, descriptors, navigation }: any) {
@@ -177,11 +185,37 @@ function TabNavigator() {
   );
 }
 
+function ResponderTabNavigator() {
+  return (
+    <Tab.Navigator
+      tabBar={(props) => <CustomTabBar {...props} />}
+      screenOptions={{ headerShown: false }}
+      initialRouteName="Scan"
+    >
+      <Tab.Screen name="Reports" component={ReportsScreen} />
+      <Tab.Screen name="Scan" component={ResponderScanScreen} />
+      <Tab.Screen name="Settings" component={ResponderSettingsScreen} />
+    </Tab.Navigator>
+  );
+}
+
 export default function Navigation() {
+  const { role, isLoading } = useApp();
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#f8fafc' }} />
+    );
+  }
+
+  const isResponder =
+    role === 'medic' || role === 'responder' || role === 'admin';
+  const MainComponent = isResponder ? ResponderTabNavigator : TabNavigator;
+
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Main" component={TabNavigator} />
+        <Stack.Screen name="Main" component={MainComponent} />
         <Stack.Screen name="ReadNFC" component={ReadNFCOverlay}
           options={{ presentation: 'containedTransparentModal', animation: 'none' }} />
         <Stack.Screen name="WriteNFC" component={WriteNFCOverlay}
@@ -190,11 +224,13 @@ export default function Navigation() {
           options={{ presentation: 'containedTransparentModal', animation: 'none' }} />
         <Stack.Screen name="Success" component={SuccessOverlay}
           options={{ presentation: 'containedTransparentModal', animation: 'none' }} />
-          <Stack.Screen
-            name="NFCResult"
-            component={NFCResultScreen}
-            options={{ presentation: 'containedTransparentModal', animation: 'none' }}
-          />
+        <Stack.Screen
+          name="NFCResult"
+          component={NFCResultScreen}
+          options={{ presentation: 'containedTransparentModal', animation: 'none' }}
+        />
+        <Stack.Screen name="NewReport" component={NewReportScreen} />
+        <Stack.Screen name="ReportDetail" component={ReportDetailScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

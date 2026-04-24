@@ -1,13 +1,23 @@
-import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { useApp } from '../context/AppContext';
+import { sendVictimAlert } from '../services/sms';
+import {
+  getReportById,
+  saveReport as storageSaveReport,
+} from '../storage/asyncStorage';
+import type { ReportEntry } from '../types/responder';
 
 type Kin = { n: string; p: string; r: string };
-
-// ─────────────────────────────────────────────
-// SHARED COMPONENTS — matches ProfileScreen style
-// ─────────────────────────────────────────────
 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -35,17 +45,114 @@ function SectionItem({ label, last = false }: { label: string; last?: boolean })
   );
 }
 
-// ─────────────────────────────────────────────
-// MAIN SCREEN
-// ─────────────────────────────────────────────
-
 export default function NFCResultScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const route = useRoute<any>();
-  const { data } = route.params;
+  const {
+    data,
+    fromReport: fromReportParam,
+    viewOnly = false,
+  } = route.params ?? {};
+  const { role, activeReport, responderProfile, addVictimToReport } = useApp();
 
-  // TODO: wire to real auth context later
-  const isAuthorized = false;
+  const isResponder =
+    role === 'medic' || role === 'responder' || role === 'admin';
+  const isAuthorized = isResponder || data?.is_public === true;
+
+  // Freeze the active report we add to, so later context updates don't
+  // cause us to re-add to a different report. viewOnly skips the auto-add.
+  const targetReportIdRef = useRef<string | null>(
+    !viewOnly && isResponder && activeReport ? activeReport.id : null
+  );
+  const targetReportNameRef = useRef<string | null>(
+    viewOnly
+      ? (fromReportParam ?? null)
+      : (fromReportParam ?? activeReport?.name ?? null)
+  );
+
+  const [entryId, setEntryId] = useState<string | null>(null);
+  const [smsSent, setSmsSent] = useState(false);
+  const [sendingSms, setSendingSms] = useState(false);
+  const addedRef = useRef(false);
+
+  // On mount, if responder + active report → add victim to the report.
+  useEffect(() => {
+    if (!isResponder || !targetReportIdRef.current || addedRef.current) return;
+    if (!data) return;
+    addedRef.current = true;
+
+    const newEntry: ReportEntry = {
+      id: `${data.id}-${Date.now()}`,
+      n: data.n,
+      bt: data.bt,
+      dob: data.dob,
+      a: data.a ?? [],
+      c: data.c ?? [],
+      meds: data.meds ?? [],
+      kin: data.kin ?? [],
+      scannedAt: Date.now(),
+      smsSent: false,
+    };
+    setEntryId(newEntry.id);
+    addVictimToReport(targetReportIdRef.current, newEntry).catch(() => {
+      addedRef.current = false;
+    });
+  }, [isResponder, data, addVictimToReport]);
+
+  async function markEntrySmsSent() {
+    const rid = targetReportIdRef.current;
+    if (!rid || !entryId) return;
+    const report = await getReportById(rid);
+    if (!report) return;
+    const updated = {
+      ...report,
+      entries: report.entries.map((e) =>
+        e.id === entryId ? { ...e, smsSent: true } : e
+      ),
+      syncedToCloud: false,
+    };
+    await storageSaveReport(updated);
+  }
+
+  async function onSendAlert() {
+    if (!data?.kin || data.kin.length === 0) return;
+    if (!responderProfile) {
+      Alert.alert('Not signed in', 'Sign in as personnel to send alerts.');
+      return;
+    }
+    setSendingSms(true);
+    const entry: ReportEntry = {
+      id: entryId ?? `${data.id}-${Date.now()}`,
+      n: data.n,
+      bt: data.bt,
+      dob: data.dob,
+      a: data.a ?? [],
+      c: data.c ?? [],
+      meds: data.meds ?? [],
+      kin: data.kin,
+      scannedAt: Date.now(),
+      smsSent: false,
+    };
+    const location = activeReport?.location ?? data.cty ?? 'Unknown location';
+    const res = await sendVictimAlert(
+      entry,
+      location,
+      responderProfile.full_name
+    );
+    setSendingSms(false);
+    if (res.ok) {
+      setSmsSent(true);
+      await markEntrySmsSent();
+      Alert.alert('Alert sent', `SMS sent to ${res.sentTo?.length ?? 0} contact(s).`);
+    } else {
+      Alert.alert(
+        'SMS failed',
+        res.error === 'no_kin_numbers'
+          ? 'No valid phone numbers for this victim.'
+          : `Could not send SMS: ${res.error ?? 'unknown error'}`
+      );
+    }
+  }
 
   function getInitials(name: string): string {
     return name?.split(' ').slice(0, 2).map((w: string) => w[0]).join('') ?? '?';
@@ -56,10 +163,16 @@ export default function NFCResultScreen() {
     return Math.floor(diff / (1000 * 60 * 60 * 24 * 365.25));
   }
 
+  const hasKin = Array.isArray(data?.kin) && data.kin.length > 0;
+  const showSmsSheet = !viewOnly && isResponder && hasKin;
+
   return (
     <SafeAreaView className="flex-1 bg-teal-50">
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100 }}
+        contentContainerStyle={{
+          paddingHorizontal: 20,
+          paddingBottom: showSmsSheet ? 180 : 100,
+        }}
         showsVerticalScrollIndicator={false}
       >
         {/* Top bar */}
@@ -72,15 +185,35 @@ export default function NFCResultScreen() {
           </TouchableOpacity>
           <View
             className="rounded-xl px-3 py-1.5"
-            style={{ backgroundColor: isAuthorized ? '#0f766e' : '#f59e0b' }}
+            style={{
+              backgroundColor: isResponder
+                ? '#0f766e'
+                : isAuthorized
+                ? '#0f766e'
+                : '#f59e0b',
+            }}
           >
             <Text className="text-white text-xs font-bold">
-              {isAuthorized ? '🔓 Authorized Access' : '👁 Civilian Access'}
+              {isResponder
+                ? `🚑 ${role?.toUpperCase()} ACCESS`
+                : isAuthorized
+                ? '🔓 Public Record'
+                : '👁 Civilian Access'}
             </Text>
           </View>
         </View>
 
-        {/* Identity header card — matches ProfileScreen header */}
+        {/* Added-to-report banner */}
+        {targetReportNameRef.current && (
+          <View className="bg-teal-600 rounded-2xl px-4 py-3 mb-4 flex-row items-center">
+            <Text className="text-white text-base mr-2">✓</Text>
+            <Text className="text-white text-sm font-semibold flex-1">
+              Added to {targetReportNameRef.current}
+            </Text>
+          </View>
+        )}
+
+        {/* Identity header */}
         <View className="bg-white rounded-2xl border border-slate-100 p-4 mb-4">
           <View className="flex-row items-center" style={{ gap: 12 }}>
             <View className="w-12 h-12 rounded-xl bg-teal-700 items-center justify-center">
@@ -119,7 +252,6 @@ export default function NFCResultScreen() {
           </View>
         </View>
 
-        {/* Personal info — always visible */}
         <SectionCard title="Personal Information">
           <SectionItem label={`📅  ${new Date(data.dob).toLocaleDateString('en-PH', {
             year: 'numeric', month: 'long', day: 'numeric' })}`} />
@@ -127,7 +259,6 @@ export default function NFCResultScreen() {
           <SectionItem label={`📞  ${data.phn}`} last />
         </SectionCard>
 
-        {/* Emergency contacts — always visible */}
         <SectionCard title="Emergency Contacts">
           {data.kin?.length === 0
             ? <SectionItem label="No emergency contacts" last />
@@ -146,7 +277,6 @@ export default function NFCResultScreen() {
           }
         </SectionCard>
 
-        {/* AUTHORIZED — full medical info */}
         {isAuthorized ? (
           <>
             <SectionCard title="Allergies">
@@ -189,7 +319,6 @@ export default function NFCResultScreen() {
             </SectionCard>
           </>
         ) : (
-          /* CIVILIAN — locked banner */
           <View className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-3 flex-row items-center">
             <Text className="text-2xl mr-3">🔒</Text>
             <View className="flex-1">
@@ -204,6 +333,67 @@ export default function NFCResultScreen() {
         )}
 
       </ScrollView>
+
+      {/* SMS action sheet — responders only, when kin exists */}
+      {showSmsSheet && (
+        <View
+          style={{
+            position: 'absolute',
+            left: 16,
+            right: 16,
+            bottom: 24,
+            backgroundColor: 'white',
+            borderRadius: 20,
+            borderWidth: 1,
+            borderColor: '#e2e8f0',
+            padding: 16,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 8 },
+            shadowOpacity: 0.08,
+            shadowRadius: 24,
+            elevation: 8,
+          }}
+        >
+          <View className="flex-row items-center mb-2">
+            <Text className="text-base mr-2">📱</Text>
+            <Text className="text-slate-700 text-sm font-semibold flex-1">
+              {smsSent
+                ? 'Alert sent to emergency contacts'
+                : 'Send SMS to emergency contacts'}
+            </Text>
+          </View>
+          <Text className="text-slate-400 text-xs mb-3" numberOfLines={2}>
+            {data.kin
+              .map((k: Kin) => `${k.n} (${k.r}) · ${k.p}`)
+              .join('  •  ')}
+          </Text>
+          <View className="flex-row" style={{ gap: 8 }}>
+            <TouchableOpacity
+              onPress={onSendAlert}
+              disabled={sendingSms || smsSent}
+              className="flex-1 rounded-xl items-center justify-center py-3"
+              style={{
+                backgroundColor: smsSent ? '#0f766e' : '#dc2626',
+                opacity: sendingSms ? 0.6 : 1,
+              }}
+            >
+              {sendingSms ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text className="text-white text-sm font-bold">
+                  {smsSent ? '✓ SENT' : 'SEND ALERT'}
+                </Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              className="rounded-xl items-center justify-center py-3 px-5 bg-slate-100"
+            >
+              <Text className="text-slate-600 text-sm font-semibold">Skip</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }

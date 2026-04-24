@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { supabase } from '../lib/supabase';
+import { useApp } from '../context/AppContext';
 import {
   saveLocalUser,
   getLocalUser,
@@ -725,6 +726,7 @@ function ExistingAccountScreen({
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const { refreshSession } = useApp();
 
   function formatPhone(raw: string): string {
     const digits = raw.replace(/\D/g, '');
@@ -789,6 +791,7 @@ function ExistingAccountScreen({
       organization: personnelData?.organization ?? null,
     };
     await saveCloudSession(session);
+    await refreshSession();
 
     // Try to find profile by phone
     setStep('restoring');
