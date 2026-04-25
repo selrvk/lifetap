@@ -22,8 +22,13 @@ export async function readNfcTag(): Promise<Record<string, any> | null> {
     const bytes = tag.ndefMessage[0].payload;
     // NDEF text records have a language prefix — strip it
     const text = Ndef.text.decodePayload(bytes as unknown as Uint8Array);
-    return JSON.parse(text);
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error('UNRECOGNIZED_TAG');
+    }
   } catch (e) {
+    if (e instanceof Error && e.message === 'UNRECOGNIZED_TAG') throw e;
     console.error('readNfcTag error:', e);
     return null;
   } finally {

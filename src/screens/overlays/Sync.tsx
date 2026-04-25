@@ -6,6 +6,7 @@ import { RippleRing, BouncingDot } from './../../components/NFCanimations';
 import { supabase } from '../../lib/supabase';
 import {
   getLocalUser,
+  updateLocalUser,
   getCloudSession,
   markSyncedToCloud,
   overwriteLocalUserFromCloud,
@@ -390,11 +391,25 @@ export default function SyncOverlay() {
     const session = await getCloudSession();
     if (!session) { setStep('error'); return; }
 
-    // Upsert local data to Supabase
+    // If this account already owns a cloud profile with a different id (e.g. user
+    // cleared local data and re-onboarded), adopt the existing cloud id so the
+    // upsert updates that row instead of violating the owner_id unique constraint.
+    let profileId = localUser.id;
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .eq('owner_id', session.user_id)
+      .maybeSingle();
+
+    if (existing && existing.id !== localUser.id) {
+      profileId = existing.id;
+      await updateLocalUser({ id: profileId } as any);
+    }
+
     const { error } = await supabase
       .from('users')
       .upsert({
-        id: localUser.id,
+        id: profileId,
         n: localUser.n,
         dob: localUser.dob,
         bt: localUser.bt,

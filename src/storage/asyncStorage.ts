@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import EncryptedStorage from 'react-native-encrypted-storage';
 import type { Report, ReportEntry } from '../types/responder';
 
 // ================================================
@@ -88,16 +89,15 @@ const KEYS = {
 
 export async function getCloudSession(): Promise<CloudSession | null> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.CLOUD_SESSION);
+    const raw = await EncryptedStorage.getItem(KEYS.CLOUD_SESSION);
     if (!raw) return null;
 
     const session: CloudSession = JSON.parse(raw);
 
-    // Check if session is expired
-    if (Date.now() > session.expires_at) {
-      await clearCloudSession();
-      return null;
-    }
+    // Don't delete on expiry — Supabase may still be mid-refresh via onAuthStateChange.
+    // The TOKEN_REFRESHED handler in AppContext will update the stored tokens.
+    // Treat expired as "not logged in" but leave storage intact for the refresh to land.
+    if (Date.now() > session.expires_at) return null;
 
     return session;
   } catch (e) {
@@ -106,9 +106,31 @@ export async function getCloudSession(): Promise<CloudSession | null> {
   }
 }
 
+// Called by AppContext.onAuthStateChange when Supabase refreshes tokens.
+// Updates only the auth tokens and expiry without touching personnel data.
+export async function updateCloudSessionTokens(
+  access_token: string,
+  refresh_token: string,
+  expires_at_seconds: number,
+): Promise<void> {
+  try {
+    const raw = await EncryptedStorage.getItem(KEYS.CLOUD_SESSION);
+    if (!raw) return;
+    const session: CloudSession = JSON.parse(raw);
+    await EncryptedStorage.setItem(KEYS.CLOUD_SESSION, JSON.stringify({
+      ...session,
+      access_token,
+      refresh_token,
+      expires_at: expires_at_seconds * 1000,
+    }));
+  } catch (e) {
+    console.error('updateCloudSessionTokens error:', e);
+  }
+}
+
 export async function saveCloudSession(session: CloudSession): Promise<void> {
   try {
-    await AsyncStorage.setItem(KEYS.CLOUD_SESSION, JSON.stringify(session));
+    await EncryptedStorage.setItem(KEYS.CLOUD_SESSION, JSON.stringify(session));
   } catch (e) {
     console.error('saveCloudSession error:', e);
   }
@@ -116,7 +138,7 @@ export async function saveCloudSession(session: CloudSession): Promise<void> {
 
 export async function clearCloudSession(): Promise<void> {
   try {
-    await AsyncStorage.removeItem(KEYS.CLOUD_SESSION);
+    await EncryptedStorage.removeItem(KEYS.CLOUD_SESSION);
   } catch (e) {
     console.error('clearCloudSession error:', e);
   }
@@ -140,7 +162,7 @@ export async function isPersonnel(): Promise<boolean> {
 
 export async function getLocalUser(): Promise<LocalUser | null> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.USER_PROFILE);
+    const raw = await EncryptedStorage.getItem(KEYS.USER_PROFILE);
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
     console.error('getLocalUser error:', e);
@@ -150,7 +172,7 @@ export async function getLocalUser(): Promise<LocalUser | null> {
 
 export async function saveLocalUser(user: LocalUser): Promise<void> {
   try {
-    await AsyncStorage.setItem(KEYS.USER_PROFILE, JSON.stringify(user));
+    await EncryptedStorage.setItem(KEYS.USER_PROFILE, JSON.stringify(user));
   } catch (e) {
     console.error('saveLocalUser error:', e);
   }
@@ -203,13 +225,16 @@ export async function markSyncedToCloud(): Promise<void> {
   }
 }
 
-// Call this after pulling newer data from cloud
+// Call this after pulling newer data from cloud.
+// Callers must pass lastModified = new Date(updated_at).getTime() so that
+// the next sync comparison sees local === cloud rather than local > cloud.
 export async function overwriteLocalUserFromCloud(user: LocalUser): Promise<void> {
   try {
     await saveLocalUser({
       ...user,
-      lastModified: Date.now(),
-      syncedToTag: false,    // cloud pulled but tag still needs update
+      // Preserve caller-supplied lastModified (should be the cloud's updated_at).
+      // Do NOT override with Date.now() — that causes a false "local is newer" on next sync.
+      syncedToTag: false,
       syncedToCloud: true,
     });
   } catch (e) {
@@ -219,7 +244,7 @@ export async function overwriteLocalUserFromCloud(user: LocalUser): Promise<void
 
 export async function clearLocalUser(): Promise<void> {
   try {
-    await AsyncStorage.removeItem(KEYS.USER_PROFILE);
+    await EncryptedStorage.removeItem(KEYS.USER_PROFILE);
   } catch (e) {
     console.error('clearLocalUser error:', e);
   }
@@ -231,7 +256,7 @@ export async function clearLocalUser(): Promise<void> {
 
 export async function getPersonnelSession(): Promise<PersonnelSession | null> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.PERSONNEL_SESSION);
+    const raw = await EncryptedStorage.getItem(KEYS.PERSONNEL_SESSION);
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
     console.error('getPersonnelSession error:', e);
@@ -241,7 +266,7 @@ export async function getPersonnelSession(): Promise<PersonnelSession | null> {
 
 export async function savePersonnelSession(session: PersonnelSession): Promise<void> {
   try {
-    await AsyncStorage.setItem(KEYS.PERSONNEL_SESSION, JSON.stringify(session));
+    await EncryptedStorage.setItem(KEYS.PERSONNEL_SESSION, JSON.stringify(session));
   } catch (e) {
     console.error('savePersonnelSession error:', e);
   }
@@ -249,7 +274,7 @@ export async function savePersonnelSession(session: PersonnelSession): Promise<v
 
 export async function clearPersonnelSession(): Promise<void> {
   try {
-    await AsyncStorage.removeItem(KEYS.PERSONNEL_SESSION);
+    await EncryptedStorage.removeItem(KEYS.PERSONNEL_SESSION);
   } catch (e) {
     console.error('clearPersonnelSession error:', e);
   }
@@ -314,7 +339,7 @@ export async function getSyncStatus(): Promise<SyncStatus> {
 
 export async function getAllReports(): Promise<Report[]> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.REPORTS);
+    const raw = await EncryptedStorage.getItem(KEYS.REPORTS);
     return raw ? (JSON.parse(raw) as Report[]) : [];
   } catch (e) {
     console.error('getAllReports error:', e);
@@ -323,7 +348,7 @@ export async function getAllReports(): Promise<Report[]> {
 }
 
 async function writeAllReports(reports: Report[]): Promise<void> {
-  await AsyncStorage.setItem(KEYS.REPORTS, JSON.stringify(reports));
+  await EncryptedStorage.setItem(KEYS.REPORTS, JSON.stringify(reports));
 }
 
 export async function getReportById(id: string): Promise<Report | null> {
@@ -352,7 +377,7 @@ export async function deleteReport(id: string): Promise<void> {
 
 export async function getActiveReport(): Promise<Report | null> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.ACTIVE_REPORT);
+    const raw = await EncryptedStorage.getItem(KEYS.ACTIVE_REPORT);
     return raw ? (JSON.parse(raw) as Report) : null;
   } catch (e) {
     console.error('getActiveReport error:', e);
@@ -368,7 +393,7 @@ export async function setActiveReport(report: Report | null): Promise<void> {
       const exists = updated.some((r) => r.id === report.id);
       if (!exists) updated.push({ ...report, isActive: true });
       await writeAllReports(updated);
-      await AsyncStorage.setItem(
+      await EncryptedStorage.setItem(
         KEYS.ACTIVE_REPORT,
         JSON.stringify({ ...report, isActive: true })
       );
@@ -376,7 +401,7 @@ export async function setActiveReport(report: Report | null): Promise<void> {
       const all = await getAllReports();
       const updated = all.map((r) => ({ ...r, isActive: false }));
       await writeAllReports(updated);
-      await AsyncStorage.removeItem(KEYS.ACTIVE_REPORT);
+      await EncryptedStorage.removeItem(KEYS.ACTIVE_REPORT);
     }
   } catch (e) {
     console.error('setActiveReport error:', e);
@@ -401,7 +426,7 @@ export async function addEntryToReport(
 
   const active = await getActiveReport();
   if (active?.id === reportId) {
-    await AsyncStorage.setItem(KEYS.ACTIVE_REPORT, JSON.stringify(updated));
+    await EncryptedStorage.setItem(KEYS.ACTIVE_REPORT, JSON.stringify(updated));
   }
   return updated;
 }
@@ -412,7 +437,7 @@ export async function markReportSynced(id: string): Promise<void> {
   await saveReport({ ...report, syncedToCloud: true });
   const active = await getActiveReport();
   if (active?.id === id) {
-    await AsyncStorage.setItem(
+    await EncryptedStorage.setItem(
       KEYS.ACTIVE_REPORT,
       JSON.stringify({ ...report, syncedToCloud: true })
     );

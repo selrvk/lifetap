@@ -11,6 +11,8 @@ import { AppState, AppStateStatus } from 'react-native';
 import { supabase } from '../lib/supabase';
 import {
   getCloudSession,
+  clearCloudSession,
+  updateCloudSessionTokens,
   CloudSession,
   getActiveReport as storageGetActiveReport,
   setActiveReport as storageSetActiveReport,
@@ -95,7 +97,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     })();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, supabaseSession) => {
+      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+        if (supabaseSession) {
+          // Keep our stored session tokens in sync with Supabase's refresh cycle.
+          // Without this, getCloudSession() returns null after 1hr even if Supabase
+          // successfully refreshed internally.
+          await updateCloudSessionTokens(
+            supabaseSession.access_token,
+            supabaseSession.refresh_token,
+            supabaseSession.expires_at ?? 0,
+          );
+        }
+      } else if (event === 'SIGNED_OUT') {
+        // Supabase signed out (e.g. token revoked server-side) — clear our copy too.
+        await clearCloudSession();
+      }
       refreshSession();
     });
     return () => {
@@ -120,8 +137,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const active = await storageGetActiveReport();
         setActiveReportState(active);
       }
-    } catch {
-      // swallow — offline or server error; next foreground will retry
+    } catch (e) {
+      console.error('[AppContext] background sync failed:', e);
     } finally {
       syncingRef.current = false;
     }

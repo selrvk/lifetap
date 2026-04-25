@@ -31,6 +31,7 @@ import {
 type LockMethod = 'faceid' | 'pin';
 type LoginStep = 'phone' | 'otp' | 'loading';
 
+
 function getInitials(name: string): string {
   return name.split(' ').slice(0, 2).map(w => w[0]).join('');
 }
@@ -84,7 +85,6 @@ function LoginSheet({ onSuccess, onCancel }: {
   onSuccess: (session: CloudSession) => void;
   onCancel: () => void;
 }) {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [step, setStep] = useState<LoginStep>('phone');
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
@@ -221,9 +221,7 @@ function LoginSheet({ onSuccess, onCancel }: {
           className="bg-teal-600 rounded-2xl py-4 items-center mb-3"
           activeOpacity={0.85}
         >
-          <Text className="text-white font-semibold">
-            {mode === 'signup' ? 'Create Account' : 'Sign In'}
-          </Text>
+          <Text className="text-white font-semibold">Sign In</Text>
         </TouchableOpacity>
 
         <TouchableOpacity onPress={handleReset}>
@@ -238,37 +236,11 @@ function LoginSheet({ onSuccess, onCancel }: {
   // step === 'phone'
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-
-      {/* Mode toggle */}
-      <View className="flex-row bg-teal-50 rounded-xl p-1 mb-6" style={{ gap: 4 }}>
-        {(['signin', 'signup'] as const).map(m => {
-          const active = mode === m;
-          return (
-            <TouchableOpacity
-              key={m}
-              onPress={() => { setMode(m); setError(null); }}
-              className="flex-1 items-center py-2 rounded-lg"
-              style={{ backgroundColor: active ? '#0f766e' : 'transparent' }}
-              activeOpacity={0.8}
-            >
-              <Text
-                className="text-sm font-semibold"
-                style={{ color: active ? '#ffffff' : '#94a3b8' }}
-              >
-                {m === 'signin' ? 'Sign In' : 'Sign Up'}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
       <Text className="text-teal-900 text-lg font-bold mb-1">
-        {mode === 'signin' ? 'Sign In to Cloud' : 'Create Cloud Account'}
+        Sign In to Cloud
       </Text>
       <Text className="text-slate-400 text-sm mb-6">
-        {mode === 'signin'
-          ? 'Enter your phone number to receive a one-time sign in code'
-          : 'Enter your phone number to create a LifeTap cloud account'}
+        Enter your phone number to receive a one-time code. An account is created automatically if you don't have one.
       </Text>
 
       <View className="bg-teal-50 border border-teal-100 rounded-2xl px-4 py-3 mb-4">
@@ -286,14 +258,6 @@ function LoginSheet({ onSuccess, onCancel }: {
         />
       </View>
 
-      {mode === 'signup' && (
-        <View className="bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 mb-4">
-          <Text className="text-amber-700 text-xs leading-5">
-            📋  A cloud account lets you back up your medical profile and restore it on any device. Personnel accounts are created by administrators only.
-          </Text>
-        </View>
-      )}
-
       {error && (
         <Text className="text-red-400 text-xs mb-4">{error}</Text>
       )}
@@ -303,9 +267,7 @@ function LoginSheet({ onSuccess, onCancel }: {
         className="bg-teal-600 rounded-2xl py-4 items-center mb-3"
         activeOpacity={0.85}
       >
-        <Text className="text-white font-semibold">
-          {mode === 'signin' ? 'Send Code' : 'Create Account'}
-        </Text>
+        <Text className="text-white font-semibold">Send Code</Text>
       </TouchableOpacity>
 
       <TouchableOpacity onPress={onCancel}>
@@ -328,7 +290,7 @@ export default function AccountScreen() {
   const [session, setSession] = useState<CloudSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [showLogin, setShowLogin] = useState(false);
-  const { refreshSession } = useApp();
+  const { refreshSession, deactivateReport } = useApp();
 
   useFocusEffect(
     useCallback(() => {
@@ -374,6 +336,7 @@ export default function AccountScreen() {
           onPress: async () => {
             await clearCloudSession();
             await supabase.auth.signOut();
+            await deactivateReport(); // prevent active report leaking to next sign-in
             await refreshSession();
             setSession(null);
           },

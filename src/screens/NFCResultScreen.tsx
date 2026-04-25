@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -19,17 +20,48 @@ import type { ReportEntry } from '../types/responder';
 
 type Kin = { n: string; p: string; r: string };
 
-function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
+type Tone = 'default' | 'critical' | 'warning';
+
+const TONE_STYLES: Record<Tone, {
+  border: string; stripe: string; badgeBg: string; badgeBorder: string; badgeText: string;
+}> = {
+  default:  { border: '#f1f5f9', stripe: 'transparent', badgeBg: '#f0fdfa', badgeBorder: '#ccfbf1', badgeText: '#0f766e' },
+  critical: { border: '#fecaca', stripe: '#dc2626',     badgeBg: '#fef2f2', badgeBorder: '#fecaca', badgeText: '#b91c1c' },
+  warning:  { border: '#fde68a', stripe: '#d97706',     badgeBg: '#fffbeb', badgeBorder: '#fde68a', badgeText: '#b45309' },
+};
+
+function SectionCard({
+  title,
+  children,
+  tone = 'default',
+}: {
+  title: string;
+  children: React.ReactNode;
+  tone?: Tone;
+}) {
+  const t = TONE_STYLES[tone];
   return (
-    <View className="bg-white rounded-2xl mb-3 overflow-hidden border border-slate-100">
-      <View className="px-4 pt-3 pb-1">
-        <View className="self-start bg-teal-50 border border-teal-100 rounded-full px-3 py-1">
-          <Text className="text-teal-600 text-xs font-semibold uppercase tracking-wider">
-            {title}
-          </Text>
+    <View
+      className="bg-white rounded-2xl mb-3 overflow-hidden border flex-row"
+      style={{ borderColor: t.border }}
+    >
+      <View style={{ width: 4, backgroundColor: t.stripe }} />
+      <View className="flex-1">
+        <View className="px-4 pt-3 pb-1">
+          <View
+            className="self-start rounded-full px-3 py-1 border"
+            style={{ backgroundColor: t.badgeBg, borderColor: t.badgeBorder }}
+          >
+            <Text
+              className="text-xs font-semibold uppercase tracking-wider"
+              style={{ color: t.badgeText }}
+            >
+              {title}
+            </Text>
+          </View>
         </View>
+        <View className="px-4 py-2">{children}</View>
       </View>
-      <View className="px-4 py-2">{children}</View>
     </View>
   );
 }
@@ -41,6 +73,36 @@ function SectionItem({ label, last = false }: { label: string; last?: boolean })
       style={!last ? { borderBottomWidth: 1, borderBottomColor: '#f1f5f9' } : undefined}
     >
       <Text className="text-slate-600 text-sm leading-5">{label}</Text>
+    </View>
+  );
+}
+
+function CallableItem({ name, sub, phone, last = false }: {
+  name: string; sub: string; phone: string; last?: boolean;
+}) {
+  function dial() {
+    const digits = phone.replace(/\D/g, '');
+    if (digits) Linking.openURL(`tel:${digits}`).catch(() => {});
+  }
+  return (
+    <View
+      className="py-3 flex-row items-center"
+      style={!last ? { borderBottomWidth: 1, borderBottomColor: '#f1f5f9' } : undefined}
+    >
+      <View className="flex-1">
+        <Text className="text-slate-700 text-sm font-semibold">{name}</Text>
+        <Text className="text-slate-400 text-xs mt-0.5">{sub}</Text>
+      </View>
+      <TouchableOpacity
+        onPress={dial}
+        className="rounded-xl px-4 py-2"
+        style={{ backgroundColor: '#16a34a' }}
+        accessibilityRole="button"
+        accessibilityLabel={`Call ${name}`}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        <Text style={{ color: 'white', fontWeight: '700', fontSize: 13 }}>Call</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -233,9 +295,17 @@ export default function NFCResultScreen() {
           </View>
 
           <View className="flex-row mt-4" style={{ gap: 8 }}>
-            <View className="flex-1 bg-teal-50 rounded-xl py-2 items-center">
-              <Text className="text-teal-700 text-sm font-semibold">{data.bt}</Text>
-              <Text className="text-slate-400 text-xs mt-0.5">Blood Type</Text>
+            {/* Blood type gets red — only stat a civilian can act on */}
+            <View
+              className="flex-1 rounded-xl py-2 items-center"
+              style={{ backgroundColor: '#dc2626' }}
+            >
+              <Text style={{ color: 'white', fontSize: 14, fontWeight: '800' }}>
+                {data.bt || '—'}
+              </Text>
+              <Text style={{ color: '#fecaca', fontSize: 11, marginTop: 2 }}>
+                Blood Type
+              </Text>
             </View>
             <View className="flex-1 bg-teal-50 rounded-xl py-2 items-center">
               <Text className="text-teal-700 text-sm font-semibold">
@@ -253,33 +323,38 @@ export default function NFCResultScreen() {
         </View>
 
         <SectionCard title="Personal Information">
-          <SectionItem label={`📅  ${new Date(data.dob).toLocaleDateString('en-PH', {
+          <SectionItem label={`📅  ${new Date(data.dob + 'T00:00:00').toLocaleDateString('en-PH', {
             year: 'numeric', month: 'long', day: 'numeric' })}`} />
           <SectionItem label={`📍  ${data.brg}, ${data.cty}`} />
-          <SectionItem label={`📞  ${data.phn}`} last />
+          <CallableItem
+            name={`📞  ${data.phn}`}
+            sub="Personal phone"
+            phone={data.phn}
+            last
+          />
         </SectionCard>
 
         <SectionCard title="Emergency Contacts">
           {data.kin?.length === 0
             ? <SectionItem label="No emergency contacts" last />
             : data.kin?.map((k: Kin, i: number) => (
-                <View
+                <CallableItem
                   key={i}
-                  className="py-3"
-                  style={i < data.kin.length - 1
-                    ? { borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }
-                    : undefined}
-                >
-                  <Text className="text-slate-700 text-sm font-semibold">{k.n}</Text>
-                  <Text className="text-slate-400 text-xs mt-0.5">{k.r} · {k.p}</Text>
-                </View>
+                  name={k.n}
+                  sub={`${k.r}  ·  ${k.p}`}
+                  phone={k.p}
+                  last={i === data.kin.length - 1}
+                />
               ))
           }
         </SectionCard>
 
         {isAuthorized ? (
           <>
-            <SectionCard title="Allergies">
+            <SectionCard
+              title={data.a?.length > 0 ? '⚠ Allergies' : 'Allergies'}
+              tone={data.a?.length > 0 ? 'critical' : 'default'}
+            >
               {data.a?.length === 0
                 ? <SectionItem label="No known allergies" last />
                 : data.a?.map((item: string, i: number) => (
@@ -292,7 +367,10 @@ export default function NFCResultScreen() {
               }
             </SectionCard>
 
-            <SectionCard title="Medical Conditions">
+            <SectionCard
+              title="Medical Conditions"
+              tone={data.c?.length > 0 ? 'warning' : 'default'}
+            >
               {data.c?.length === 0
                 ? <SectionItem label="No known conditions" last />
                 : data.c?.map((item: string, i: number) => (
@@ -319,17 +397,48 @@ export default function NFCResultScreen() {
             </SectionCard>
           </>
         ) : (
-          <View className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-3 flex-row items-center">
-            <Text className="text-2xl mr-3">🔒</Text>
-            <View className="flex-1">
-              <Text className="text-amber-800 text-sm font-semibold">
-                Medical Info Restricted
-              </Text>
-              <Text className="text-amber-600 text-xs mt-0.5 leading-4">
-                Sign in as an authorized medical responder to view allergies, conditions, and medications.
-              </Text>
+          <>
+            <View className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-3 flex-row items-center">
+              <Text className="text-2xl mr-3">🔒</Text>
+              <View className="flex-1">
+                <Text className="text-amber-800 text-sm font-semibold">
+                  Medical Info Restricted
+                </Text>
+                <Text className="text-amber-600 text-xs mt-0.5 leading-4">
+                  Allergies, conditions, and medications are only visible to authorized responders.
+                </Text>
+              </View>
             </View>
-          </View>
+
+            {/* Civilian first aid guidance */}
+            <View className="bg-white border border-slate-100 rounded-2xl p-4 mb-3">
+              <Text className="text-slate-700 text-sm font-bold mb-3">
+                If this person needs help:
+              </Text>
+              {[
+                { icon: '🚨', text: 'Call emergency services (911) immediately' },
+                { icon: '🩹', text: 'Keep the person still and comfortable' },
+                { icon: '📡', text: 'Stay on the line with the dispatcher' },
+                { icon: '🏷️', text: 'Tell responders a LifeTap tag was scanned' },
+              ].map(({ icon, text }, i) => (
+                <View key={i} className="flex-row items-start mb-2" style={{ gap: 10 }}>
+                  <Text style={{ fontSize: 16 }}>{icon}</Text>
+                  <Text className="text-slate-500 text-sm flex-1 leading-5">{text}</Text>
+                </View>
+              ))}
+              <TouchableOpacity
+                onPress={() => Linking.openURL('tel:911').catch(() => {})}
+                className="rounded-xl py-3 items-center mt-2"
+                style={{ backgroundColor: '#dc2626' }}
+                accessibilityRole="button"
+                accessibilityLabel="Call 911"
+              >
+                <Text style={{ color: 'white', fontWeight: '800', fontSize: 15 }}>
+                  Call 911
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </>
         )}
 
       </ScrollView>

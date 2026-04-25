@@ -11,6 +11,7 @@ import {
   Platform,
   Modal,
   Alert,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -91,17 +92,57 @@ function validateStep(step: number, form: any): string | null {
 // SHARED COMPONENTS
 // ─────────────────────────────────────────────
 
-function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
+type Tone = 'default' | 'critical' | 'warning';
+
+const TONE_STYLES: Record<Tone, {
+  border: string; stripe: string; badgeBg: string; badgeBorder: string; badgeText: string;
+}> = {
+  default: {
+    border: '#f1f5f9', stripe: 'transparent',
+    badgeBg: '#f0fdfa', badgeBorder: '#ccfbf1', badgeText: '#0f766e',
+  },
+  critical: {
+    border: '#fecaca', stripe: '#dc2626',
+    badgeBg: '#fef2f2', badgeBorder: '#fecaca', badgeText: '#b91c1c',
+  },
+  warning: {
+    border: '#fde68a', stripe: '#d97706',
+    badgeBg: '#fffbeb', badgeBorder: '#fde68a', badgeText: '#b45309',
+  },
+};
+
+function SectionCard({
+  title,
+  children,
+  tone = 'default',
+}: {
+  title: string;
+  children: React.ReactNode;
+  tone?: Tone;
+}) {
+  const t = TONE_STYLES[tone];
   return (
-    <View className="bg-white rounded-2xl mb-3 overflow-hidden border border-slate-100">
-      <View className="px-4 pt-3 pb-1">
-        <View className="self-start bg-teal-50 border border-teal-100 rounded-full px-3 py-1">
-          <Text className="text-teal-600 text-xs font-semibold uppercase tracking-wider">
-            {title}
-          </Text>
+    <View
+      className="bg-white rounded-2xl mb-3 overflow-hidden border flex-row"
+      style={{ borderColor: t.border }}
+    >
+      <View style={{ width: 4, backgroundColor: t.stripe }} />
+      <View className="flex-1">
+        <View className="px-4 pt-3 pb-1">
+          <View
+            className="self-start rounded-full px-3 py-1 border"
+            style={{ backgroundColor: t.badgeBg, borderColor: t.badgeBorder }}
+          >
+            <Text
+              className="text-xs font-semibold uppercase tracking-wider"
+              style={{ color: t.badgeText }}
+            >
+              {title}
+            </Text>
+          </View>
         </View>
+        <View className="px-4 py-2">{children}</View>
       </View>
-      <View className="px-4 py-2">{children}</View>
     </View>
   );
 }
@@ -152,7 +193,16 @@ function Field({
   );
 }
 
-// Fix: DOB date picker component
+// DOB date picker — platform-correct: iOS shows a spinner inside a bottom sheet,
+// Android uses the native dialog (must NOT be wrapped in Modal).
+function toIso(d: Date) {
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, '0'),
+    String(d.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
 function DateField({
   value,
   onChange,
@@ -161,9 +211,8 @@ function DateField({
   onChange: (v: string) => void;
 }) {
   const [show, setShow] = useState(false);
-  const [tempDate, setTempDate] = useState<Date>(
-    value ? new Date(value + 'T00:00:00') : new Date(2000, 0, 1)
-  );
+  const initial = value ? new Date(value + 'T00:00:00') : new Date(2000, 0, 1);
+  const [tempDate, setTempDate] = useState<Date>(initial);
 
   const displayDate = value
     ? new Date(value + 'T00:00:00').toLocaleDateString('en-PH', {
@@ -173,14 +222,9 @@ function DateField({
       })
     : null;
 
-  function handleConfirm() {
-    const iso = [
-      tempDate.getFullYear(),
-      String(tempDate.getMonth() + 1).padStart(2, '0'),
-      String(tempDate.getDate()).padStart(2, '0'),
-    ].join('-');
-    onChange(iso);
-    setShow(false);
+  function openPicker() {
+    setTempDate(value ? new Date(value + 'T00:00:00') : new Date(2000, 0, 1));
+    setShow(true);
   }
 
   return (
@@ -192,7 +236,12 @@ function DateField({
         <Text className="text-xs text-teal-700 font-semibold uppercase tracking-wider mb-1">
           Date of Birth
         </Text>
-        <TouchableOpacity onPress={() => setShow(true)}>
+        <TouchableOpacity
+          onPress={openPicker}
+          accessibilityRole="button"
+          accessibilityLabel="Select date of birth"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
           <Text
             className="text-sm py-1"
             style={{ color: displayDate ? '#1e293b' : '#cbd5e1' }}
@@ -202,55 +251,98 @@ function DateField({
         </TouchableOpacity>
       </View>
 
-      <Modal visible={show} transparent animationType="fade">
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.4)',
-            justifyContent: 'flex-end',
+      {/* Android: native dialog. Render only while shown; never wrap in Modal. */}
+      {Platform.OS === 'android' && show && (
+        <DateTimePicker
+          value={tempDate}
+          mode="date"
+          display="default"
+          maximumDate={new Date()}
+          minimumDate={new Date(1900, 0, 1)}
+          onChange={(event, date) => {
+            setShow(false);
+            if (event.type === 'set' && date) {
+              onChange(toIso(date));
+            }
           }}
+        />
+      )}
+
+      {/* iOS: custom bottom sheet with spinner and explicit Confirm/Cancel. */}
+      {Platform.OS === 'ios' && (
+        <Modal
+          visible={show}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShow(false)}
         >
-          <View
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={() => setShow(false)}
             style={{
-              backgroundColor: 'white',
-              borderTopLeftRadius: 24,
-              borderTopRightRadius: 24,
-              padding: 20,
-              paddingBottom: 36,
+              flex: 1,
+              backgroundColor: 'rgba(0,0,0,0.4)',
+              justifyContent: 'flex-end',
             }}
           >
-            <Text className="text-teal-900 text-base font-bold mb-2 text-center">
-              Select Date of Birth
-            </Text>
-            <DateTimePicker
-              value={tempDate}
-              mode="date"
-              display="spinner"
-              maximumDate={new Date()}
-              minimumDate={new Date(1900, 0, 1)}
-              onChange={(_, date) => {
-                if (date) setTempDate(date);
-              }}
-            />
-            <TouchableOpacity
-              onPress={handleConfirm}
-              className="bg-teal-600 rounded-2xl py-4 items-center mt-2"
-              activeOpacity={0.85}
-            >
-              <Text className="text-white font-semibold">Confirm</Text>
+            <TouchableOpacity activeOpacity={1} onPress={() => {}}>
+              <View
+                style={{
+                  backgroundColor: 'white',
+                  borderTopLeftRadius: 24,
+                  borderTopRightRadius: 24,
+                  padding: 20,
+                  paddingBottom: 36,
+                }}
+              >
+                <Text className="text-teal-900 text-base font-bold mb-2 text-center">
+                  Select Date of Birth
+                </Text>
+                <DateTimePicker
+                  value={tempDate}
+                  mode="date"
+                  display="spinner"
+                  maximumDate={new Date()}
+                  minimumDate={new Date(1900, 0, 1)}
+                  onChange={(_, date) => {
+                    if (date) setTempDate(date);
+                  }}
+                />
+                <TouchableOpacity
+                  onPress={() => {
+                    onChange(toIso(tempDate));
+                    setShow(false);
+                  }}
+                  className="bg-teal-600 rounded-2xl py-4 items-center mt-2"
+                  activeOpacity={0.85}
+                >
+                  <Text className="text-white font-semibold">Confirm</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setShow(false)}
+                  className="items-center py-3"
+                >
+                  <Text className="text-slate-400 text-sm">Cancel</Text>
+                </TouchableOpacity>
+              </View>
             </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setShow(false)}
-              className="items-center py-3"
-            >
-              <Text className="text-slate-400 text-sm">Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+          </TouchableOpacity>
+        </Modal>
+      )}
     </>
   );
 }
+
+// Common medical entries to nudge users away from free-text typos like "Bunny"
+const COMMON_ALLERGIES = [
+  'Penicillin', 'Aspirin', 'Ibuprofen', 'Sulfa drugs', 'Peanuts',
+  'Tree nuts', 'Shellfish', 'Eggs', 'Dairy', 'Soy', 'Latex', 'Bee stings',
+];
+const COMMON_CONDITIONS = [
+  'Hypertension', 'Type 1 Diabetes', 'Type 2 Diabetes', 'Asthma', 'Epilepsy',
+  'Heart Disease', 'Stroke history', 'Kidney Disease', 'Pregnancy',
+  'Hemophilia', 'Anemia', 'Thyroid disorder',
+];
 
 function ChipInput({
   label,
@@ -258,21 +350,31 @@ function ChipInput({
   onAdd,
   onRemove,
   placeholder,
+  suggestions,
 }: {
   label: string;
   items: string[];
   onAdd: (v: string) => void;
   onRemove: (i: number) => void;
   placeholder?: string;
+  suggestions?: string[];
 }) {
   const [input, setInput] = useState('');
 
-  function handleAdd() {
-    const trimmed = input.trim();
+  function handleAdd(value?: string) {
+    const trimmed = (value ?? input).trim();
     if (!trimmed) return;
+    if (items.some(i => i.toLowerCase() === trimmed.toLowerCase())) {
+      setInput('');
+      return;
+    }
     onAdd(trimmed);
     setInput('');
   }
+
+  const remainingSuggestions = (suggestions ?? []).filter(
+    s => !items.some(i => i.toLowerCase() === s.toLowerCase())
+  );
 
   return (
     <View className="mb-4">
@@ -302,16 +404,34 @@ function ChipInput({
           placeholder={placeholder ?? `Add ${label.toLowerCase()}...`}
           placeholderTextColor="#cbd5e1"
           className="flex-1 text-sm px-3 py-2 text-slate-800"
-          onSubmitEditing={handleAdd}
+          onSubmitEditing={() => handleAdd()}
           returnKeyType="done"
         />
         <TouchableOpacity
-          onPress={handleAdd}
+          onPress={() => handleAdd()}
           className="bg-teal-600 px-4 items-center justify-center"
+          accessibilityLabel={`Add ${label.toLowerCase()}`}
         >
           <Text className="text-white text-lg font-light">+</Text>
         </TouchableOpacity>
       </View>
+      {remainingSuggestions.length > 0 && (
+        <View className="mt-2">
+          <Text className="text-slate-400 text-[11px] mb-1">Suggestions</Text>
+          <View className="flex-row flex-wrap" style={{ gap: 6 }}>
+            {remainingSuggestions.map(s => (
+              <TouchableOpacity
+                key={s}
+                onPress={() => handleAdd(s)}
+                className="bg-slate-50 border border-slate-200 rounded-full px-3 py-1"
+                accessibilityLabel={`Add ${s}`}
+              >
+                <Text className="text-slate-600 text-xs">+ {s}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -483,6 +603,7 @@ function StepMedical({
           onAdd={v => onChange('a', [...data.a, v])}
           onRemove={i => onChange('a', data.a.filter((_: any, idx: number) => idx !== i))}
           placeholder="e.g. penicillin"
+          suggestions={COMMON_ALLERGIES}
         />
         <ChipInput
           label="Conditions"
@@ -490,6 +611,7 @@ function StepMedical({
           onAdd={v => onChange('c', [...data.c, v])}
           onRemove={i => onChange('c', data.c.filter((_: any, idx: number) => idx !== i))}
           placeholder="e.g. Type 2 Diabetes"
+          suggestions={COMMON_CONDITIONS}
         />
         <ChipInput
           label="Medications"
@@ -793,13 +915,13 @@ function ExistingAccountScreen({
     await saveCloudSession(session);
     await refreshSession();
 
-    // Try to find profile by phone
+    // Restore by owner_id (Supabase user UUID) — guaranteed unique per account.
+    // Searching by phn could return the wrong row if duplicates exist.
     setStep('restoring');
-    const normalized = normalizePhone(formatted);
     const { data: userData } = await supabase
       .from('users')
       .select('*')
-      .eq('phn', normalized)
+      .eq('owner_id', data.session.user.id)
       .maybeSingle();
 
     if (userData) {
@@ -1060,6 +1182,238 @@ function OnboardingFlow({ onComplete }: { onComplete: () => void }) {
 }
 
 // ─────────────────────────────────────────────
+// EMERGENCY VIEW — large-text, high-contrast, responder-readable
+// ─────────────────────────────────────────────
+
+function EmergencyView({ user, onClose }: { user: LocalUser; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const age = getAge(user.dob);
+
+  function callNumber(raw: string) {
+    const digits = raw.replace(/\D/g, '');
+    if (!digits) return;
+    Linking.openURL(`tel:${digits}`).catch(() => {});
+  }
+
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
+        <ScrollView
+          contentContainerStyle={{
+            paddingTop: insets.top + 12,
+            paddingBottom: insets.bottom + 24,
+            paddingHorizontal: 20,
+          }}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Header */}
+          <View className="flex-row items-center justify-between mb-4">
+            <View
+              className="rounded-lg px-3 py-1"
+              style={{ backgroundColor: '#dc2626' }}
+            >
+              <Text style={{ color: 'white', fontSize: 13, fontWeight: '800', letterSpacing: 1 }}>
+                EMERGENCY MEDICAL ID
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={onClose}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityLabel="Close emergency view"
+            >
+              <Text style={{ color: '#94a3b8', fontSize: 16, fontWeight: '600' }}>
+                Close
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Identity */}
+          <Text style={{ color: 'white', fontSize: 32, fontWeight: '800', lineHeight: 38 }}>
+            {user.n || 'Unknown'}
+          </Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 18, marginTop: 4 }}>
+            {age != null ? `${age} years old` : '—'}
+            {user.rel ? `  ·  ${user.rel}` : ''}
+          </Text>
+
+          {/* Vital strip */}
+          <View className="flex-row mt-5" style={{ gap: 10 }}>
+            <View
+              className="flex-1 rounded-2xl py-3 items-center"
+              style={{ backgroundColor: '#dc2626' }}
+            >
+              <Text style={{ color: '#fecaca', fontSize: 12, fontWeight: '600', letterSpacing: 1 }}>
+                BLOOD TYPE
+              </Text>
+              <Text style={{ color: 'white', fontSize: 36, fontWeight: '800', marginTop: 2 }}>
+                {user.bt || '—'}
+              </Text>
+            </View>
+            <View
+              className="flex-1 rounded-2xl py-3 items-center"
+              style={{
+                backgroundColor: user.od ? '#0f766e' : '#1e293b',
+                borderWidth: 1,
+                borderColor: user.od ? '#0f766e' : '#334155',
+              }}
+            >
+              <Text
+                style={{
+                  color: user.od ? '#a7f3d0' : '#94a3b8',
+                  fontSize: 12, fontWeight: '600', letterSpacing: 1,
+                }}
+              >
+                ORGAN DONOR
+              </Text>
+              <Text style={{ color: 'white', fontSize: 24, fontWeight: '800', marginTop: 6 }}>
+                {user.od ? 'YES' : 'NO'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Allergies — critical */}
+          <EmergencySection
+            title="ALLERGIES"
+            tone="critical"
+            items={user.a}
+            empty="No known allergies"
+          />
+
+          {/* Conditions — warning */}
+          <EmergencySection
+            title="MEDICAL CONDITIONS"
+            tone="warning"
+            items={user.c}
+            empty="No known conditions"
+          />
+
+          {/* Medications */}
+          <EmergencySection
+            title="MEDICATIONS"
+            tone="neutral"
+            items={user.meds}
+            empty="None"
+          />
+
+          {/* Emergency contacts — tap to call */}
+          <Text
+            style={{
+              color: '#94a3b8', fontSize: 13, fontWeight: '700',
+              letterSpacing: 1.5, marginTop: 24, marginBottom: 8,
+            }}
+          >
+            EMERGENCY CONTACTS
+          </Text>
+          {user.kin.length === 0 ? (
+            <View
+              className="rounded-2xl px-4 py-4"
+              style={{ backgroundColor: '#1e293b' }}
+            >
+              <Text style={{ color: '#94a3b8', fontSize: 16 }}>None listed</Text>
+            </View>
+          ) : (
+            user.kin.map((k, i) => (
+              <TouchableOpacity
+                key={i}
+                onPress={() => callNumber(k.p)}
+                className="rounded-2xl px-4 py-4 mb-2 flex-row items-center"
+                style={{ backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155' }}
+                accessibilityRole="button"
+                accessibilityLabel={`Call ${k.n}, ${k.r}`}
+              >
+                <View className="flex-1">
+                  <Text style={{ color: 'white', fontSize: 18, fontWeight: '700' }}>
+                    {k.n}
+                  </Text>
+                  <Text style={{ color: '#cbd5e1', fontSize: 14, marginTop: 2 }}>
+                    {k.r}  ·  {k.p}
+                  </Text>
+                </View>
+                <View
+                  className="rounded-full px-4 py-2"
+                  style={{ backgroundColor: '#16a34a' }}
+                >
+                  <Text style={{ color: 'white', fontWeight: '700', fontSize: 14 }}>
+                    Call
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
+
+          {/* Address */}
+          {(user.brg || user.cty) && (
+            <View
+              className="rounded-2xl px-4 py-3 mt-4"
+              style={{ backgroundColor: '#1e293b' }}
+            >
+              <Text style={{ color: '#94a3b8', fontSize: 12, letterSpacing: 1, fontWeight: '700' }}>
+                ADDRESS
+              </Text>
+              <Text style={{ color: 'white', fontSize: 16, marginTop: 4 }}>
+                {[user.brg, user.cty].filter(Boolean).join(', ')}
+              </Text>
+            </View>
+          )}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+function EmergencySection({
+  title,
+  tone,
+  items,
+  empty,
+}: {
+  title: string;
+  tone: 'critical' | 'warning' | 'neutral';
+  items: string[];
+  empty: string;
+}) {
+  const palette =
+    tone === 'critical'
+      ? { label: '#fca5a5', bg: '#7f1d1d', text: 'white', empty: '#fecaca' }
+      : tone === 'warning'
+      ? { label: '#fcd34d', bg: '#78350f', text: 'white', empty: '#fde68a' }
+      : { label: '#94a3b8', bg: '#1e293b', text: 'white', empty: '#94a3b8' };
+
+  return (
+    <>
+      <Text
+        style={{
+          color: palette.label, fontSize: 13, fontWeight: '700',
+          letterSpacing: 1.5, marginTop: 24, marginBottom: 8,
+        }}
+      >
+        {title}
+      </Text>
+      <View
+        className="rounded-2xl px-4 py-3"
+        style={{ backgroundColor: palette.bg }}
+      >
+        {items.length === 0 ? (
+          <Text style={{ color: palette.empty, fontSize: 16 }}>{empty}</Text>
+        ) : (
+          items.map((item, i) => (
+            <Text
+              key={i}
+              style={{
+                color: palette.text, fontSize: 20, fontWeight: '700',
+                paddingVertical: 6,
+              }}
+            >
+              •  {item}
+            </Text>
+          ))
+        )}
+      </View>
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────
 // PROFILE VIEW
 // ─────────────────────────────────────────────
 
@@ -1072,6 +1426,7 @@ function ProfileView({
 }) {
   const insets = useSafeAreaInsets();
   const [editing, setEditing] = useState(false);
+  const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [editStep, setEditStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [stepError, setStepError] = useState<string | null>(null);
@@ -1273,6 +1628,19 @@ function ProfileView({
             </TouchableOpacity>
           </View>
 
+          <TouchableOpacity
+            onPress={() => setEmergencyOpen(true)}
+            className="rounded-2xl py-3 mt-4 flex-row items-center justify-center"
+            style={{ backgroundColor: '#dc2626', gap: 8 }}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Show emergency medical ID"
+          >
+            <Text style={{ color: 'white', fontSize: 16, fontWeight: '800', letterSpacing: 0.5 }}>
+              🚑  Show Emergency ID
+            </Text>
+          </TouchableOpacity>
+
           <View className="flex-row mt-4" style={{ gap: 8 }}>
             <View className="flex-1 bg-teal-50 rounded-xl py-2 items-center">
               <Text className="text-teal-700 text-sm font-semibold">{user.bt}</Text>
@@ -1313,7 +1681,10 @@ function ProfileView({
           <SectionItem label={`📞  ${user.phn}`} last />
         </SectionCard>
 
-        <SectionCard title="Allergies">
+        <SectionCard
+          title={user.a.length > 0 ? '⚠ Allergies' : 'Allergies'}
+          tone={user.a.length > 0 ? 'critical' : 'default'}
+        >
           {user.a.length === 0 ? (
             <SectionItem label="No known allergies" last />
           ) : (
@@ -1323,7 +1694,10 @@ function ProfileView({
           )}
         </SectionCard>
 
-        <SectionCard title="Medical Conditions">
+        <SectionCard
+          title="Medical Conditions"
+          tone={user.c.length > 0 ? 'warning' : 'default'}
+        >
           {user.c.length === 0 ? (
             <SectionItem label="No known conditions" last />
           ) : (
@@ -1395,6 +1769,10 @@ function ProfileView({
           />
         </SectionCard>
       </ScrollView>
+
+      {emergencyOpen && (
+        <EmergencyView user={user} onClose={() => setEmergencyOpen(false)} />
+      )}
     </SafeAreaView>
   );
 }

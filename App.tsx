@@ -4,6 +4,7 @@ import React, { useEffect } from 'react';
 import Navigation from './src/navigation';
 import { initNfc } from './src/services/nfc';
 import { AppProvider } from './src/context/AppContext';
+import ErrorBoundary from './src/components/ErrorBoundary';
 
 export default function App() {
 
@@ -12,8 +13,10 @@ export default function App() {
   }, []);
 
   return (
-    <AppProvider>
-      <Navigation />
-    </AppProvider>
+    <ErrorBoundary>
+      <AppProvider>
+        <Navigation />
+      </AppProvider>
+    </ErrorBoundary>
   );
 }
