@@ -259,12 +259,11 @@ function DateField({
           display="default"
           maximumDate={new Date()}
           minimumDate={new Date(1900, 0, 1)}
-          onChange={(event, date) => {
+          onValueChange={(event, date) => {
             setShow(false);
-            if (event.type === 'set' && date) {
-              onChange(toIso(date));
-            }
+            if (event.type === 'set' && date) onChange(toIso(date));
           }}
+          onDismiss={() => setShow(false)}
         />
       )}
 
@@ -285,16 +284,15 @@ function DateField({
               justifyContent: 'flex-end',
             }}
           >
-            <TouchableOpacity activeOpacity={1} onPress={() => {}}>
-              <View
-                style={{
-                  backgroundColor: 'white',
-                  borderTopLeftRadius: 24,
-                  borderTopRightRadius: 24,
-                  padding: 20,
-                  paddingBottom: 36,
-                }}
-              >
+            <View
+              style={{
+                backgroundColor: 'white',
+                borderTopLeftRadius: 24,
+                borderTopRightRadius: 24,
+                padding: 20,
+                paddingBottom: 36,
+              }}
+            >
                 <Text className="text-teal-900 text-base font-bold mb-2 text-center">
                   Select Date of Birth
                 </Text>
@@ -304,7 +302,9 @@ function DateField({
                   display="spinner"
                   maximumDate={new Date()}
                   minimumDate={new Date(1900, 0, 1)}
-                  onChange={(_, date) => {
+                  style={{ height: 216, width: '100%' }}
+                  textColor="#1e293b"
+                  onValueChange={(_, date) => {
                     if (date) setTempDate(date);
                   }}
                 />
@@ -324,8 +324,7 @@ function DateField({
                 >
                   <Text className="text-slate-400 text-sm">Cancel</Text>
                 </TouchableOpacity>
-              </View>
-            </TouchableOpacity>
+            </View>
           </TouchableOpacity>
         </Modal>
       )}

@@ -1,10 +1,11 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
-  ScrollView,
   Image,
+  Animated,
+  Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -52,12 +53,126 @@ const SYNC_CONFIG: Record<SyncStatus, {
   },
 };
 
+const RADIAL_SIZE = 330;
+const BUTTON_SIZE = 220;
+const OUTER_ORBIT = 320;
+const INNER_ORBIT = 265;
+
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
   const [userName, setUserName] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('IN_SYNC');
   const [hasUser, setHasUser] = useState<boolean>(false);
   const [session, setSession] = useState<CloudSession | null>(null);
+
+  const ping1 = useRef(new Animated.Value(0)).current;
+  const ping2 = useRef(new Animated.Value(0)).current;
+  const ping3 = useRef(new Animated.Value(0)).current;
+  const breathe = useRef(new Animated.Value(0)).current;
+  const orbitOuter = useRef(new Animated.Value(0)).current;
+  const orbitInner = useRef(new Animated.Value(0)).current;
+  const arc1 = useRef(new Animated.Value(0)).current;
+  const arc2 = useRef(new Animated.Value(0)).current;
+  const arc3 = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const PING_PERIOD = 2400;
+    const ARC_PERIOD = 1800;
+
+    const makePingLoop = (val: Animated.Value) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(val, {
+            toValue: 1,
+            duration: PING_PERIOD,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(val, {
+            toValue: 0,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+
+    const makeBreathe = () =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(breathe, {
+            toValue: 1,
+            duration: 1500,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(breathe, {
+            toValue: 0,
+            duration: 1500,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      );
+
+    const ITERATIONS = 1000;
+    const makeOrbit = (val: Animated.Value, duration: number) =>
+      Animated.timing(val, {
+        toValue: ITERATIONS,
+        duration: duration * ITERATIONS,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      });
+
+    const makeArcLoop = (val: Animated.Value) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(val, {
+            toValue: 1,
+            duration: ARC_PERIOD / 2,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(val, {
+            toValue: 0,
+            duration: ARC_PERIOD / 2,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      );
+
+    const breatheAnim = makeBreathe();
+    const orbitOuterAnim = makeOrbit(orbitOuter, 18000);
+    const orbitInnerAnim = makeOrbit(orbitInner, 26000);
+
+    breatheAnim.start();
+    orbitOuterAnim.start();
+    orbitInnerAnim.start();
+
+    // Stagger starts outside the loop so all three share the same period
+    const p1 = makePingLoop(ping1);
+    const p2 = makePingLoop(ping2);
+    const p3 = makePingLoop(ping3);
+    const a1 = makeArcLoop(arc1);
+    const a2 = makeArcLoop(arc2);
+    const a3 = makeArcLoop(arc3);
+
+    p1.start();
+    const t1 = setTimeout(() => p2.start(), PING_PERIOD / 3);
+    const t2 = setTimeout(() => p3.start(), (PING_PERIOD / 3) * 2);
+
+    a1.start();
+    const t3 = setTimeout(() => a2.start(), ARC_PERIOD / 3);
+    const t4 = setTimeout(() => a3.start(), (ARC_PERIOD / 3) * 2);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+      [breatheAnim, orbitOuterAnim, orbitInnerAnim, p1, p2, p3, a1, a2, a3].forEach(a => a.stop());
+    };
+  }, [ping1, ping2, ping3, breathe, orbitOuter, orbitInner, arc1, arc2, arc3]);
 
   useFocusEffect(
     useCallback(() => {
@@ -85,187 +200,380 @@ export default function HomeScreen() {
 
   const sync = SYNC_CONFIG[syncStatus];
 
+  const pingStyle = (val: Animated.Value) => ({
+    transform: [
+      {
+        scale: val.interpolate({
+          inputRange: [0, 1],
+          outputRange: [1, 1.7],
+        }),
+      },
+    ],
+    opacity: val.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.5, 0],
+    }),
+  });
+
+  const orbitRotate = (val: Animated.Value, reverse = false) => ({
+    transform: [
+      {
+        rotate: Animated.modulo(val, 1).interpolate({
+          inputRange: [0, 1],
+          outputRange: reverse ? ['0deg', '-360deg'] : ['0deg', '360deg'],
+        }),
+      },
+    ],
+  });
+
+  const breatheStyle = {
+    transform: [
+      {
+        scale: breathe.interpolate({
+          inputRange: [0, 1],
+          outputRange: [1, 1.04],
+        }),
+      },
+    ],
+  };
+
   return (
     <SafeAreaView className="flex-1 bg-teal-50">
-      <ScrollView
-        className="flex-1"
-        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}
-        showsVerticalScrollIndicator={false}
+      <View
+        style={{
+          flex: 1,
+          paddingHorizontal: 20,
+          paddingBottom: 100,
+        }}
       >
-
-        {/* Logo */}
-        <View className="items-center mt-6 mb-4">
+        {/* Header */}
+        <View className="flex-row items-center justify-between mt-3 mb-1">
           <Image
-            className="w-40 h-40"
-            source={require('./../../assets/lifetap-logo-w-label.png')}
+            style={{ height: 28, width: 100 }}
+            resizeMode="contain"
+            source={require('./../../assets/lifetap-w-label-landscape.png')}
           />
+          {hasUser ? (
+            <Text className="text-gray-500 text-sm">
+              Welcome back, <Text className="text-gray-800 font-semibold">{userName}</Text>
+            </Text>
+          ) : (
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Profile')}
+              activeOpacity={0.8}
+              className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex-row items-center"
+            >
+              <Text className="text-amber-700 text-xs font-semibold mr-1">
+                No profile
+              </Text>
+              <Text className="text-amber-400 text-base">›</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        {/* Welcome — or no profile banner */}
-        {hasUser ? (
-          <View className="items-center mt-4">
-            <Text className="text-gray-400 text-sm">Welcome back,</Text>
-            <Text className="text-gray-700 text-base font-semibold text-xl">
-              {userName}
-            </Text>
-          </View>
-        ) : (
-          <TouchableOpacity
-            onPress={() => navigation.navigate('Profile')}
-            activeOpacity={0.8}
-          >
-            <View className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 mt-4 flex-row items-center">
-              <View className="w-8 h-8 rounded-xl bg-amber-100 items-center justify-center mr-3">
-                <Text className="text-base">👤</Text>
-              </View>
-              <View className="flex-1">
-                <Text className="text-amber-800 text-sm font-semibold">
-                  No profile set up
-                </Text>
-                <Text className="text-amber-600 text-xs mt-0.5">
-                  Tap to set up your LifeTap profile
-                </Text>
-              </View>
-              <Text className="text-amber-400 text-lg">›</Text>
-            </View>
-          </TouchableOpacity>
-        )}
-
-        {/* Read LifeTap — always available */}
-        <TouchableOpacity
-          className="rounded-3xl overflow-hidden mb-4 mt-10"
-          style={{ height: 240 }}
-          onPress={() => navigation.navigate('ReadNFC')}
-          activeOpacity={0.85}
+        {/* Radial scanner */}
+        <View
+          style={{
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
         >
-          <LinearGradient
-            colors={['#0d9488', '#0f766e', '#134e4a']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={{ flex: 1 }}
+          <Text
+            className="text-gray-400 font-semibold mb-4"
+            style={{ letterSpacing: 3, fontSize: 11 }}
           >
-            <View className="absolute top-4 right-4 opacity-40">
-              <Text className="text-white text-lg">↻</Text>
-            </View>
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-              <Image
-                style={{ width: 180, height: 180 }}
-                resizeMode="contain"
-                source={require('./../../assets/icons/read-nfc-icon.png')}
-              />
-              <Text className="text-white text-2xl my-2 font-bold">
-                Read LifeTap
-              </Text>
-            </View>
-          </LinearGradient>
-        </TouchableOpacity>
-
-        {/* Write to LifeTap — only if user exists */}
-        {hasUser && (
-          <TouchableOpacity
-            className="bg-white border border-teal-100 rounded-2xl flex-row items-center px-5 py-4 mb-4"
-            onPress={() => navigation.navigate('WriteNFC')}
-            activeOpacity={0.85}
-          >
-            <View className="w-10 h-10 rounded-xl bg-teal-50 items-center justify-center mr-4">
-              <Image
-                style={{ width: 30, height: 30 }}
-                resizeMode="contain"
-                source={require('./../../assets/icons/pencil-icon.png')}
-              />
-            </View>
-            <Text className="text-teal-700 text-lg font-semibold">
-              Write to LifeTap
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Cloud button — changes based on login state */}
-        {hasUser && (
-          session ? (
-            // Logged in — show upload button
-            <TouchableOpacity
-              className="bg-white border border-teal-100 rounded-2xl flex-row items-center px-5 py-4 mb-4"
-              onPress={() => navigation.navigate('SyncOverlay')}
-              activeOpacity={0.85}
-            >
-              <View className="w-10 h-10 rounded-xl bg-teal-50 items-center justify-center mr-4">
-                <Image
-                  style={{ width: 30, height: 30 }}
-                  resizeMode="contain"
-                  source={require('./../../assets/icons/cloud-icon.png')}
-                />
-              </View>
-              <View className="flex-1">
-                <Text className="text-teal-700 text-lg font-semibold">
-                  Sync and Upload to Cloud
-                </Text>
-                {session.full_name && (
-                  <Text className="text-slate-400 text-xs mt-0.5">
-                    Signed in as {session.full_name}
-                  </Text>
-                )}
-              </View>
-            </TouchableOpacity> 
-          ) : (
-            // Not logged in — show login prompt
-            <TouchableOpacity
-              className="bg-white border border-slate-200 rounded-2xl flex-row items-center px-5 py-4 mb-4"
-              onPress={() => navigation.navigate('Settings')}
-              activeOpacity={0.85}
-            >
-              <View className="w-10 h-10 rounded-xl bg-slate-100 items-center justify-center mr-4">
-                <Image
-                  style={{ width: 30, height: 30, opacity: 0.4 }}
-                  resizeMode="contain"
-                  source={require('./../../assets/icons/cloud-icon.png')}
-                />
-              </View>
-              <View className="flex-1">
-                <Text className="text-slate-400 text-lg font-semibold">
-                  Upload to Cloud
-                </Text>
-                <Text className="text-slate-300 text-xs mt-0.5">
-                  Sign in to enable cloud sync
-                </Text>
-              </View>
-              <View className="bg-teal-50 border border-teal-200 rounded-xl px-3 py-1.5">
-                <Text className="text-teal-700 text-xs font-bold">LOGIN</Text>
-              </View>
-            </TouchableOpacity>
-          )
-        )}
-
-        {/* Sync Status Card — only if user exists */}
-        {hasUser && (
+            TAP TO SCAN
+          </Text>
           <View
-            className="bg-white rounded-2xl px-5 py-4 mb-4 flex-row items-center"
             style={{
-              borderWidth: 2,
-              borderColor: syncStatus === 'NOT_SYNCED' ? '#dc2626' : '#0f766e',
+              width: RADIAL_SIZE,
+              height: RADIAL_SIZE,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+          {/* Ping rings */}
+          {[ping1, ping2, ping3].map((p, i) => (
+            <Animated.View
+              key={`ping-${i}`}
+              pointerEvents="none"
+              style={[
+                {
+                  position: 'absolute',
+                  width: BUTTON_SIZE,
+                  height: BUTTON_SIZE,
+                  borderRadius: BUTTON_SIZE / 2,
+                  borderWidth: 2,
+                  borderColor: '#14857A',
+                },
+                pingStyle(p),
+              ]}
+            />
+          ))}
+
+          {/* Outer dashed orbit */}
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              {
+                position: 'absolute',
+                width: OUTER_ORBIT,
+                height: OUTER_ORBIT,
+                borderRadius: OUTER_ORBIT / 2,
+                borderWidth: 1,
+                borderStyle: 'dashed',
+                borderColor: '#14857A55',
+                alignItems: 'center',
+              },
+              orbitRotate(orbitOuter),
+            ]}
+          >
+            <View
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: '#14857A',
+                marginTop: -4,
+              }}
+            />
+          </Animated.View>
+
+          {/* Inner dashed orbit */}
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              {
+                position: 'absolute',
+                width: INNER_ORBIT,
+                height: INNER_ORBIT,
+                borderRadius: INNER_ORBIT / 2,
+                borderWidth: 1,
+                borderStyle: 'dashed',
+                borderColor: '#14857A40',
+                alignItems: 'flex-end',
+                justifyContent: 'center',
+              },
+              orbitRotate(orbitInner, true),
+            ]}
+          >
+            <View
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: '#0A4A43',
+                marginRight: -3,
+              }}
+            />
+          </Animated.View>
+
+          {/* Central button */}
+          <Animated.View style={breatheStyle}>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('ReadNFC')}
+              activeOpacity={0.85}
+            >
+              <LinearGradient
+                colors={['#14857A', '#0A4A43']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{
+                  width: BUTTON_SIZE,
+                  height: BUTTON_SIZE,
+                  borderRadius: BUTTON_SIZE / 2,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  shadowColor: '#0A4A43',
+                  shadowOffset: { width: 0, height: 8 },
+                  shadowOpacity: 0.35,
+                  shadowRadius: 16,
+                  elevation: 10,
+                }}
+              >
+                {/* NFC arcs top-right */}
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    top: 28,
+                    right: 28,
+                    width: 40,
+                    height: 40,
+                  }}
+                >
+                  {[arc1, arc2, arc3].map((a, i) => {
+                    const size = 14 + i * 10;
+                    return (
+                      <Animated.View
+                        key={`arc-${i}`}
+                        style={{
+                          position: 'absolute',
+                          bottom: 0,
+                          left: 0,
+                          width: size,
+                          height: size,
+                          borderTopRightRadius: size,
+                          borderTopWidth: 2,
+                          borderRightWidth: 2,
+                          borderColor: '#ffffff',
+                          opacity: a.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0.2, 0.9],
+                          }),
+                        }}
+                      />
+                    );
+                  })}
+                </View>
+
+                <Image
+                  style={{ width: 70, height: 70 }}
+                  resizeMode="contain"
+                  source={require('./../../assets/lifetap-logo.png')}
+                />
+                <Text className="text-white text-lg font-bold mt-2">
+                  Read LifeTap
+                </Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </Animated.View>
+          </View>
+        </View>
+
+        {/* Subtext */}
+        <Text className="text-center text-gray-400 text-xs px-6 mb-4" style={{ marginTop: -48 }}>
+          Hold phone near a LifeTap tag{'\n'}to read medical information
+        </Text>
+
+        {/* Secondary actions grid */}
+        {hasUser && (() => {
+          const writeAccent = syncStatus === 'TAG_BEHIND' || syncStatus === 'NOT_SYNCED';
+          const syncAccent = syncStatus === 'CLOUD_BEHIND' || syncStatus === 'NOT_SYNCED';
+          const cardShadow = {
+            shadowColor: '#0A4A43',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.06,
+            shadowRadius: 6,
+            elevation: 2,
+          };
+          const accentBorder = {
+            borderLeftWidth: 3,
+            borderLeftColor: '#14857A',
+          };
+          return (
+          <View className="flex-row mb-2" style={{ gap: 12 }}>
+            <TouchableOpacity
+              className="flex-1 bg-white rounded-2xl px-4 py-4"
+              style={[cardShadow, writeAccent ? accentBorder : null]}
+              onPress={() => navigation.navigate('WriteNFC')}
+              activeOpacity={0.85}
+            >
+              <View className="w-9 h-9 rounded-xl bg-teal-50 items-center justify-center mb-3">
+                <Image
+                  style={{ width: 20, height: 20 }}
+                  resizeMode="contain"
+                  source={require('./../../assets/icons/pencil-icon.png')}
+                />
+              </View>
+              <Text className="text-gray-800 text-base font-bold">
+                Write to tag
+              </Text>
+              <Text className="text-gray-400 text-xs mt-0.5">
+                Update my info
+              </Text>
+            </TouchableOpacity>
+
+            {session ? (
+              <TouchableOpacity
+                className="flex-1 bg-white rounded-2xl px-4 py-4"
+                style={[cardShadow, syncAccent ? accentBorder : null]}
+                onPress={() => navigation.navigate('SyncOverlay')}
+                activeOpacity={0.85}
+              >
+                <View className="w-9 h-9 rounded-xl bg-teal-50 items-center justify-center mb-3">
+                  <Image
+                    style={{ width: 20, height: 20 }}
+                    resizeMode="contain"
+                    source={require('./../../assets/icons/cloud-icon.png')}
+                  />
+                </View>
+                <Text className="text-gray-800 text-base font-bold">
+                  Sync cloud
+                </Text>
+                <Text
+                  className={
+                    syncStatus === 'IN_SYNC'
+                      ? 'text-gray-400 text-xs mt-0.5'
+                      : 'text-amber-600 text-xs mt-0.5 font-semibold'
+                  }
+                  numberOfLines={1}
+                >
+                  {syncStatus === 'IN_SYNC' ? 'Up to date' : sync.sub}
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                className="flex-1 bg-white rounded-2xl px-4 py-4"
+                style={cardShadow}
+                onPress={() => navigation.navigate('Settings')}
+                activeOpacity={0.85}
+              >
+                <View className="w-9 h-9 rounded-xl bg-slate-100 items-center justify-center mb-3">
+                  <Image
+                    style={{ width: 20, height: 20, opacity: 0.5 }}
+                    resizeMode="contain"
+                    source={require('./../../assets/icons/cloud-icon.png')}
+                  />
+                </View>
+                <Text className="text-gray-800 text-base font-bold">
+                  Sync cloud
+                </Text>
+                <View className="flex-row items-center mt-0.5">
+                  <Text className="text-gray-400 text-xs mr-1.5">Sign in</Text>
+                  <View className="bg-teal-50 border border-teal-200 rounded-md px-1.5 py-0.5">
+                    <Text className="text-teal-700 text-[10px] font-bold">
+                      LOGIN
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            )}
+          </View>
+          );
+        })()}
+
+        {/* Sync Status Card — only if user exists and not in sync */}
+        {hasUser && syncStatus !== 'IN_SYNC' && (
+          <View
+            className="bg-white rounded-2xl px-4 py-3 mt-2 flex-row items-center"
+            style={{
+              borderWidth: 1,
+              borderColor: syncStatus === 'NOT_SYNCED' ? '#fecaca' : '#a7f3d0',
             }}
           >
             <Image
-              style={{ width: 30, height: 30, marginRight: 18 }}
+              style={{ width: 22, height: 22, marginRight: 12 }}
               resizeMode="contain"
               source={require('./../../assets/icons/refresh-icon.png')}
             />
             <View className="flex-1">
-              <Text className="text-sm font-semibold text-gray-800">{sync.label}</Text>
-              <Text className="text-xs text-gray-400 mt-0.5">{sync.sub}</Text>
+              <Text className="text-xs font-semibold text-gray-800">{sync.label}</Text>
+              <Text className="text-[11px] text-gray-400 mt-0.5">{sync.sub}</Text>
             </View>
             {sync.action && sync.navigateTo && (
               <TouchableOpacity
-                className={`${sync.actionBg} rounded-xl px-3 py-2`}
+                className={`${sync.actionBg} rounded-lg px-2.5 py-1.5`}
                 onPress={() => navigation.navigate(sync.navigateTo!)}
               >
-                <Text className="text-xs font-bold text-white">{sync.action}</Text>
+                <Text className="text-[10px] font-bold text-white">{sync.action}</Text>
               </TouchableOpacity>
             )}
           </View>
         )}
 
-      </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
