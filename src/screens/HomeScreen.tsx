@@ -508,7 +508,8 @@ export default function HomeScreen() {
                       ? 'text-gray-400 text-xs mt-0.5'
                       : 'text-amber-600 text-xs mt-0.5 font-semibold'
                   }
-                  numberOfLines={1}
+                  numberOfLines={2}
+                  ellipsizeMode="tail"
                 >
                   {syncStatus === 'IN_SYNC' ? 'Up to date' : sync.sub}
                 </Text>
@@ -530,7 +531,7 @@ export default function HomeScreen() {
                 <Text className="text-gray-800 text-base font-bold">
                   Sync cloud
                 </Text>
-                <View className="flex-row items-center mt-0.5">
+                <View className="flex-row items-center mt-0.5 flex-wrap">
                   <Text className="text-gray-400 text-xs mr-1.5">Sign in</Text>
                   <View className="bg-teal-50 border border-teal-200 rounded-md px-1.5 py-0.5">
                     <Text className="text-teal-700 text-[10px] font-bold">

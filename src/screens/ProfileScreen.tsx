@@ -12,7 +12,13 @@ import {
   Modal,
   Alert,
   Linking,
+  Image,
+  Dimensions,
 } from 'react-native';
+import LinearGradient from 'react-native-linear-gradient';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const HERO_WIDTH = SCREEN_WIDTH - 40; // 20px padding each side
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -123,11 +129,11 @@ function SectionCard({
   const t = TONE_STYLES[tone];
   return (
     <View
-      className="bg-white rounded-2xl mb-3 overflow-hidden border flex-row"
+      className="bg-white rounded-2xl mb-3 overflow-hidden border"
       style={{ borderColor: t.border }}
     >
-      <View style={{ width: 4, backgroundColor: t.stripe }} />
-      <View className="flex-1">
+      <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, backgroundColor: t.stripe }} />
+      <View style={{ marginLeft: 4 }}>
         <View className="px-4 pt-3 pb-1">
           <View
             className="self-start rounded-full px-3 py-1 border"
@@ -1603,66 +1609,161 @@ function ProfileView({
         }}
         showsVerticalScrollIndicator={false}
       >
-        <View className="bg-white rounded-2xl border border-slate-100 p-4 mt-6 mb-4">
-          <View className="flex-row items-center" style={{ gap: 12 }}>
-            <View className="w-12 h-12 rounded-xl bg-teal-700 items-center justify-center">
-              <Text className="text-white text-base font-semibold">
+        {/* ── HERO CARD ── */}
+        <LinearGradient
+          colors={['#14857A', '#0A4A43']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{
+            width: HERO_WIDTH,
+            borderRadius: 28,
+            marginTop: 16,
+            marginBottom: 16,
+            shadowColor: '#0A4A43',
+            shadowOffset: { width: 0, height: 10 },
+            shadowOpacity: 0.25,
+            shadowRadius: 18,
+            elevation: 8,
+            overflow: 'hidden',
+          }}
+        >
+          <View style={{ padding: 18 }}>
+          {/* Top row: avatar + name + edit */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: 16,
+                backgroundColor: 'rgba(255,255,255,0.14)',
+                borderWidth: 1.5,
+                borderColor: 'rgba(255,255,255,0.35)',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <Text style={{ color: 'white', fontSize: 18, fontWeight: '700' }}>
                 {getInitials(user.n)}
               </Text>
             </View>
-            <View className="flex-1">
-              <Text className="text-teal-900 text-base font-semibold">{user.n}</Text>
-              <Text className="text-slate-400 text-xs mt-0.5">ID: {user.id}</Text>
+
+            <View style={{ flex: 1, overflow: 'hidden' }}>
+              <Text
+                style={{ color: 'white', fontSize: 18, fontWeight: '700' }}
+                numberOfLines={1}
+              >
+                {user.n}
+              </Text>
+              <Text
+                style={{ color: '#a7f3d0', fontSize: 11, marginTop: 2, letterSpacing: 0.5 }}
+                numberOfLines={1}
+              >
+                ID · {user.id}
+              </Text>
             </View>
-            {user.od && (
-              <View className="bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 mr-2">
-                <Text className="text-teal-700 text-xs font-semibold">Organ Donor</Text>
-              </View>
-            )}
+
             <TouchableOpacity
               onPress={handleStartEdit}
-              className="bg-teal-50 border border-teal-200 rounded-lg px-3 py-1"
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.4)',
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                flexShrink: 0,
+              }}
+              activeOpacity={0.8}
             >
-              <Text className="text-teal-700 text-xs font-semibold">Edit</Text>
+              <Text style={{ color: 'white', fontSize: 12, fontWeight: '600' }}>Edit</Text>
             </TouchableOpacity>
           </View>
 
+          {/* Organ donor pill */}
+          {user.od && (
+            <View
+              style={{
+                alignSelf: 'flex-start',
+                marginTop: 12,
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 999,
+                backgroundColor: 'rgba(167,243,208,0.18)',
+                borderWidth: 1,
+                borderColor: 'rgba(167,243,208,0.4)',
+              }}
+            >
+              <Text style={{ color: '#a7f3d0', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>
+                ORGAN DONOR
+              </Text>
+            </View>
+          )}
+
+          {/* Emergency CTA */}
           <TouchableOpacity
             onPress={() => setEmergencyOpen(true)}
-            className="rounded-2xl py-3 mt-4 flex-row items-center justify-center"
-            style={{ backgroundColor: '#dc2626', gap: 8 }}
+            style={{
+              marginTop: 16,
+              backgroundColor: '#dc2626',
+              borderRadius: 16,
+              paddingVertical: 14,
+              alignItems: 'center',
+              justifyContent: 'center',
+              shadowColor: '#7f1d1d',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.4,
+              shadowRadius: 10,
+              elevation: 6,
+            }}
             activeOpacity={0.85}
             accessibilityRole="button"
             accessibilityLabel="Show emergency medical ID"
           >
-            <Text style={{ color: 'white', fontSize: 16, fontWeight: '800', letterSpacing: 0.5 }}>
+            <Text style={{ color: 'white', fontSize: 15, fontWeight: '800', letterSpacing: 0.5 }}>
               🚑  Show Emergency ID
             </Text>
           </TouchableOpacity>
 
-          <View className="flex-row mt-4" style={{ gap: 8 }}>
-            <View className="flex-1 bg-teal-50 rounded-xl py-2 items-center">
-              <Text className="text-teal-700 text-sm font-semibold">{user.bt}</Text>
-              <Text className="text-slate-400 text-xs mt-0.5">Blood Type</Text>
-            </View>
-            {/* Fix 1: guard against NaN age */}
-            <View className="flex-1 bg-teal-50 rounded-xl py-2 items-center">
-              <Text className="text-teal-700 text-sm font-semibold">
-                {getAge(user.dob) ?? '—'}
-              </Text>
-              <Text className="text-slate-400 text-xs mt-0.5">Age</Text>
-            </View>
-            <View className="flex-1 bg-teal-50 rounded-xl py-2 items-center">
-              <Text
-                className="text-teal-700 text-sm font-semibold"
-                numberOfLines={1}
+          {/* Glass vitals */}
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+            {[
+              { label: 'BLOOD TYPE', value: user.bt || '—' },
+              { label: 'AGE',        value: getAge(user.dob)?.toString() ?? '—' },
+              { label: 'RELIGION',   value: user.rel || '—' },
+            ].map((tile, i) => (
+              <View
+                key={i}
+                style={{
+                  flex: 1,
+                  borderRadius: 14,
+                  paddingVertical: 10,
+                  paddingHorizontal: 4,
+                  alignItems: 'center',
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.18)',
+                }}
               >
-                {user.rel}
-              </Text>
-              <Text className="text-slate-400 text-xs mt-0.5">Religion</Text>
-            </View>
+                <Text
+                  style={{ color: 'white', fontSize: 16, fontWeight: '700' }}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.65}
+                >
+                  {tile.value}
+                </Text>
+                <Text
+                  style={{ color: '#a7f3d0', fontSize: 9, fontWeight: '600', letterSpacing: 0.8, marginTop: 4 }}
+                  numberOfLines={1}
+                >
+                  {tile.label}
+                </Text>
+              </View>
+            ))}
           </View>
-        </View>
+          </View>
+        </LinearGradient>
 
         <SectionCard title="Personal Information">
           <SectionItem

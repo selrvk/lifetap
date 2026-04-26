@@ -3,14 +3,13 @@ import {
   View,
   Text,
   TouchableOpacity,
-  Image,
   ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getLocalUser, markSyncedToTag, LocalUser } from '../../storage/asyncStorage';
 import { writeNfcTag, cancelNfc } from '../../services/nfc';
 import NFCSheet, { NFCSheetRef } from './../../components/NFCsheet';
-import { RippleRing, BouncingDot } from './../../components/NFCanimations';
+import NFCStatusPill, { NFCStatusPillRef } from './../../components/NFCStatusPill';
 
 function ConfirmStep({
   user,
@@ -112,56 +111,6 @@ function ConfirmStep({
   );
 }
 
-function ScanningStep({ onCancel }: { onCancel: () => void }) {
-  return (
-    <>
-      <View className="w-12 h-1 bg-slate-200 rounded-full mb-6 self-center" />
-
-      <View style={{
-        width: 160,
-        height: 160,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 28,
-        marginTop: 8,
-      }}>
-        <RippleRing delay={0}    size={120} />
-        <RippleRing delay={500}  size={140} />
-        <RippleRing delay={1000} size={160} />
-
-        <View style={{
-          width: 100,
-          height: 100,
-          borderRadius: 80,
-          backgroundColor: '#30726c',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 10,
-        }}>
-          <Image
-            source={require('./../../../assets/icons/write-nfc.png')}
-            style={{ width: 80, height: 80 }}
-            resizeMode="contain"
-          />
-        </View>
-      </View>
-
-      <Text className="text-lg font-semibold text-teal-900 mb-1">Writing to LifeTap</Text>
-      <Text className="text-sm text-slate-400 mb-6">Hold your phone near the NFC tag</Text>
-
-      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 24 }}>
-        <BouncingDot delay={0} />
-        <BouncingDot delay={200} />
-        <BouncingDot delay={400} />
-      </View>
-
-      <TouchableOpacity onPress={onCancel}>
-        <Text className="text-red-400 font-semibold text-sm">Cancel</Text>
-      </TouchableOpacity>
-    </>
-  );
-}
-
 function ResultStep({
   success,
   onDone,
@@ -219,6 +168,7 @@ export default function WriteNFC() {
   const [user, setUser] = useState<LocalUser | null>(null);
   
   const sheetRef = useRef<NFCSheetRef>(null);
+  const pillRef = useRef<NFCStatusPillRef>(null);
 
   useEffect(() => {
     async function load() {
@@ -264,6 +214,11 @@ export default function WriteNFC() {
     sheetRef.current?.close();
   }
 
+  function pillCancel() {
+    cancelNfc();
+    pillRef.current?.close(() => navigation.goBack());
+  }
+
   async function finalizeClose() {
     await cancelNfc();
     navigation.goBack();
@@ -277,12 +232,22 @@ export default function WriteNFC() {
     }
   }
 
+  if (step === 'scanning') {
+    return (
+      <NFCStatusPill
+        ref={pillRef}
+        label="Writing to LifeTap…"
+        onCancel={pillCancel}
+      />
+    );
+  }
+
   return (
     <NFCSheet ref={sheetRef} onClose={finalizeClose}>
       {!user && step === 'confirm' ? (
         <>
           <Text className="text-slate-400 text-sm mb-4">No local profile found.</Text>
-          <TouchableOpacity onPress={triggerClose}> 
+          <TouchableOpacity onPress={triggerClose}>
             <Text className="text-red-400 font-semibold text-sm">Close</Text>
           </TouchableOpacity>
         </>
@@ -292,17 +257,14 @@ export default function WriteNFC() {
             <ConfirmStep
               user={user}
               onConfirm={handleWrite}
-              onCancel={triggerClose} 
+              onCancel={triggerClose}
             />
-          )}
-          {step === 'scanning' && (
-            <ScanningStep onCancel={triggerClose} /> 
           )}
           {(step === 'success' || step === 'error') && (
             <ResultStep
               success={step === 'success'}
               onDone={handleDone}
-              onCancel={triggerClose} 
+              onCancel={triggerClose}
             />
           )}
         </>
