@@ -324,6 +324,51 @@ export default function AccountScreen() {
     await updateAppSettings({ lockMethod: method });
   }
 
+  async function handleDeleteAccount() {
+    Alert.alert(
+      'Delete Account',
+      'This will permanently delete your account and all associated data from our servers. This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Are you absolutely sure?',
+              'Your account, cloud profile, and all data will be permanently deleted. You will not be able to recover your account.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete My Account',
+                  style: 'destructive',
+                  onPress: async () => {
+                    if (!session) return;
+                    try {
+                      const res = await supabase.functions.invoke('delete-account', {
+                        method: 'POST',
+                      });
+                      if (res.error) throw res.error;
+                      await clearCloudSession();
+                      await clearLocalUser();
+                      await supabase.auth.signOut();
+                      await deactivateReport();
+                      await refreshSession();
+                      setSession(null);
+                      setUser(null);
+                    } catch (e: any) {
+                      Alert.alert('Error', e?.message ?? 'Failed to delete account. Please try again.');
+                    }
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  }
+
   async function handleSignOut() {
     Alert.alert(
       'Sign Out',
@@ -509,10 +554,19 @@ export default function AccountScreen() {
 
             <SettingsRow
               label="Sign Out"
-              last
               right={
                 <TouchableOpacity onPress={handleSignOut}>
                   <Text className="text-red-400 text-sm font-semibold">Sign Out</Text>
+                </TouchableOpacity>
+              }
+            />
+            <SettingsRow
+              label="Delete Account"
+              sub="Permanently delete your account and all data"
+              last
+              right={
+                <TouchableOpacity onPress={handleDeleteAccount}>
+                  <Text className="text-red-600 text-sm font-semibold">Delete</Text>
                 </TouchableOpacity>
               }
             />

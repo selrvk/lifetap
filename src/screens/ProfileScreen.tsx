@@ -77,14 +77,9 @@ function isValidPHPhone(p: string): boolean {
 function validateStep(step: number, form: any): string | null {
   switch (step) {
     case 0:
-      if (!form.n.trim())  return 'Full name is required';
-      if (!form.dob)        return 'Date of birth is required';
-      if (!form.bt)         return 'Blood type is required';
-      if (!form.rel.trim()) return 'Religion is required';
+      if (!form.n.trim()) return 'Full name is required';
       return null;
     case 1:
-      if (!form.brg.trim()) return 'Barangay is required';
-      if (!form.cty.trim()) return 'City is required';
       if (!form.phn.trim()) return 'Phone number is required';
       if (!isValidPHPhone(form.phn))
         return 'Enter a valid PH phone number (e.g. 09171234567)';
@@ -171,6 +166,7 @@ function Field({
   placeholder,
   keyboardType = 'default',
   last = false,
+  optional = false,
 }: {
   label: string;
   value: string;
@@ -178,15 +174,21 @@ function Field({
   placeholder?: string;
   keyboardType?: 'default' | 'numeric' | 'phone-pad';
   last?: boolean;
+  optional?: boolean;
 }) {
   return (
     <View
       className="py-3"
       style={!last ? { borderBottomWidth: 1, borderBottomColor: '#f8fafc' } : undefined}
     >
-      <Text className="text-xs text-teal-700 font-semibold uppercase tracking-wider mb-1">
-        {label}
-      </Text>
+      <View className="flex-row items-center mb-1">
+        <Text className="text-xs text-teal-700 font-semibold uppercase tracking-wider">
+          {label}
+        </Text>
+        {optional && (
+          <Text className="text-xs text-slate-400 ml-1.5">· optional</Text>
+        )}
+      </View>
       <TextInput
         value={value}
         onChangeText={onChange}
@@ -239,9 +241,12 @@ function DateField({
         className="py-3"
         style={{ borderBottomWidth: 1, borderBottomColor: '#f8fafc' }}
       >
-        <Text className="text-xs text-teal-700 font-semibold uppercase tracking-wider mb-1">
-          Date of Birth
-        </Text>
+        <View className="flex-row items-center mb-1">
+          <Text className="text-xs text-teal-700 font-semibold uppercase tracking-wider">
+            Date of Birth
+          </Text>
+          <Text className="text-xs text-slate-400 ml-1.5">· optional</Text>
+        </View>
         <TouchableOpacity
           onPress={openPicker}
           accessibilityRole="button"
@@ -479,14 +484,17 @@ function StepPersonal({
       </View>
 
       <View className="bg-white rounded-2xl border border-slate-100 px-4 mb-4">
-        <Text className="text-xs text-teal-700 font-semibold uppercase tracking-wider pt-3 mb-2">
-          Blood Type
-        </Text>
+        <View className="flex-row items-center pt-3 mb-2">
+          <Text className="text-xs text-teal-700 font-semibold uppercase tracking-wider">
+            Blood Type
+          </Text>
+          <Text className="text-xs text-slate-400 ml-1.5">· optional</Text>
+        </View>
         <View className="flex-row flex-wrap pb-3" style={{ gap: 8 }}>
           {BLOOD_TYPES.map(bt => (
             <TouchableOpacity
               key={bt}
-              onPress={() => onChange('bt', bt)}
+              onPress={() => onChange('bt', data.bt === bt ? '' : bt)}
               className="rounded-xl px-4 py-2 border"
               style={{
                 backgroundColor: data.bt === bt ? '#0f766e' : '#f0fdfa',
@@ -505,12 +513,6 @@ function StepPersonal({
             </TouchableOpacity>
           ))}
         </View>
-        {/* Fix 6: nudge if nothing selected */}
-        {!data.bt && (
-          <Text className="text-amber-500 text-xs pb-3">
-            Please select a blood type
-          </Text>
-        )}
       </View>
 
       <View className="bg-white rounded-2xl border border-slate-100 px-4 mb-4">
@@ -519,6 +521,7 @@ function StepPersonal({
           value={data.rel}
           onChange={v => onChange('rel', v)}
           placeholder="e.g. Catholic"
+          optional
           last
         />
       </View>
@@ -553,7 +556,7 @@ function StepAddress({
   return (
     <View>
       <Text className="text-teal-900 text-xl font-bold mb-1">Address</Text>
-      <Text className="text-slate-400 text-sm mb-6">Where are you located?</Text>
+      <Text className="text-slate-400 text-sm mb-6">Where are you located? (optional)</Text>
 
       <View className="bg-white rounded-2xl border border-slate-100 px-4 mb-4">
         <Field
@@ -561,12 +564,14 @@ function StepAddress({
           value={data.brg}
           onChange={v => onChange('brg', v)}
           placeholder="e.g. Barangay Poblacion"
+          optional
         />
         <Field
           label="City"
           value={data.cty}
           onChange={v => onChange('cty', v)}
           placeholder="e.g. Batangas City, Batangas"
+          optional
         />
         {/* Fix 4: phone-pad + validation hint */}
         <Field
@@ -1777,7 +1782,7 @@ function ProfileView({
                 : '—'
             }`}
           />
-          <SectionItem label={`📍  ${user.brg}, ${user.cty}`} />
+          <SectionItem label={`📍  ${[user.brg, user.cty].filter(Boolean).join(', ') || '—'}`} />
           <SectionItem label={`📞  ${user.phn}`} last />
         </SectionCard>
 
