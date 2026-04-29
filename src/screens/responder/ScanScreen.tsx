@@ -300,7 +300,7 @@ export default function ResponderScanScreen() {
                 </View>
 
                 <Image
-                  style={{ width: 64, height: 64 }}
+                  style={{ width: 64, height: 64, tintColor: 'white' }}
                   resizeMode="contain"
                   source={require('./../../../assets/lifetap-logo.png')}
                 />
