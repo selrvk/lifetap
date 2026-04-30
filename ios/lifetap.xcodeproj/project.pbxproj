@@ -272,7 +272,7 @@
 				CODE_SIGN_ENTITLEMENTS = lifetap/lifetap.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 4G2WGN67KA;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = lifetap/Info.plist;
@@ -283,7 +283,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3;
+				MARKETING_VERSION = 1.4;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -312,7 +312,7 @@
 				CODE_SIGN_ENTITLEMENTS = lifetap/lifetap.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 4G2WGN67KA;
 				INFOPLIST_FILE = lifetap/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = LifeTap;
@@ -322,7 +322,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3;
+				MARKETING_VERSION = 1.4;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
