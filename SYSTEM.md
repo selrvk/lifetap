@@ -151,7 +151,7 @@ React Navigation with a `Stack.Navigator` at the root. The `Main` screen renders
 A state machine with `ScreenState`: `loading | gate | onboarding | existing_account | consent_required | profile`
 
 - **GateScreen** — choose "New user" or "I have an account"
-- **ExistingAccountScreen** — OTP login to restore a cloud profile (steps: `phone | otp | loading | restoring`); shows `SignInNotice` before sending the code; restores via `profileFromCloudRow()` (consent included)
+- **ExistingAccountScreen** — restores a cloud profile by `owner_id` (steps: `checking | signed_in | phone | otp | loading | restoring | restore_failed`). Already signed in (e.g. from Settings) → offers to restore that account without another OTP, or "Use a different number". Otherwise OTP login, showing `SignInNotice` before sending the code. A failed lookup goes to `restore_failed` (Try Again) — never to "No Profile Found", which would lead to onboarding a new profile that overwrites the real backup. Restores via `profileFromCloudRow()` (consent included)
 - **OnboardingFlow** — 6-step wizard: **Consent** → Personal Info → Address → Medical → Next of Kin → Privacy. Nothing is saved until consent is given
 - **ConsentGate** (`consent_required`) — shown instead of the profile when `!hasCurrentConsent(user)` (profiles from before the consent flow, or that accepted an older notice version). Accepting goes through `updateLocalUser`, so the tag and cloud are marked out of date
 - **ProfileView** — display + edit mode using 5 steps (no consent step — consent is managed in Settings); includes Emergency ID modal showing a QR-style card view
@@ -170,7 +170,7 @@ Steps are keyed (`StepKey`): `ONBOARDING_STEPS` / `EDIT_STEPS`, validated by `va
 #### `SettingsScreen` (`src/screens/SettingsScreen.tsx`)
 - Cloud account card (shows session info or `LoginSheet` if not logged in)
 - **LoginSheet** sub-component: phone → OTP → success → `refreshSession()`; shows `SignInNotice` (account is created automatically; upload only if backup is chosen)
-- **Privacy & Consent** section: privacy notice (`PrivacyNoticeModal`), "Your consent" summary → `ConsentModal` to change who consented / SMS alerts, **Download a copy of my data** (share sheet, JSON), **Erase my LifeTap tag** (`WriteNFC` with `mode: 'erase'`), **Withdraw consent & delete my data** (`eraseEverything()` — cloud account via `delete-account` if signed in + local profile — then offers to erase the tag), Data Protection Officer contact
+- **Privacy & Consent** section: privacy notice (`PrivacyNoticeModal`), "Your consent" summary → `ConsentModal` to change who consented / SMS alerts, **Download a copy of my data** (share sheet, JSON), **Erase my LifeTap tag** (`WriteNFC` with `mode: 'erase'`), **Withdraw consent & delete my data** (`eraseEverything()` — cloud account via `delete-account` if signed in + local profile — then offers to erase the tag, passing the deleted profile's id as `ownId`; **Delete Account** does the same), Data Protection Officer contact. Tag status here and on the Profile screen uses `isTagCurrent()` — the same check as Home — so a plaintext or rotated-key tag never shows as "Synced". About shows `package.json`'s `version`
 - App Lock is **hidden** until biometric/PIN unlock is implemented (a toggle that protected nothing was misleading); `AppSettings` still stores the fields
 - **Delete Account** — triple-confirmation dialog chain; calls `supabase.functions.invoke('delete-account')` with the user's access token, then clears local session and profile. Only shown when logged in.
 - Clear Local Data with double-confirmation
@@ -199,7 +199,7 @@ Overlays use `containedTransparentModal` presentation so the underlying tab scre
 - On cancel (our ✕ or the iOS system sheet): closes quietly, no error sheet
 
 #### `WriteNFC` (`src/screens/overlays/WriteNFC.tsx`)
-Route params: `{ mode?: 'write' | 'erase' }`. State machine: `loading | confirm | scanning | success | error`
+Route params: `{ mode?: 'write' | 'erase'; ownId?: string }` (`ownId`: the tag's owner when the profile was already deleted, so the user's own tag isn't flagged as someone else's). State machine: `loading | confirm | scanning | success | error`
 - **ConfirmStep** (write): preview of all data about to be written (identity, medical, kin, privacy, SMS-alert choice)
 - Refuses to write (`NeedsConsentStep`) until the profile has current consent
 - Calls `writeNfcTag()` (payload includes `sms: consent.smsAlerts`), then `markSyncedToTag()` on success
@@ -207,11 +207,12 @@ Route params: `{ mode?: 'write' | 'erase' }`. State machine: `loading | confirm 
 - On success: transitions to `ResultStep` (in-screen success, not the shared Success overlay)
 
 #### `SyncOverlay` (`src/screens/overlays/Sync.tsx`)
-State machine: `needs_consent | comparing | in_sync | local_newer | cloud_newer | uploading | pulling | success | error`
+State machine: `needs_consent | comparing | in_sync | local_newer | cloud_newer | different_profile | uploading | pulling | success | error`
 - `needs_consent` if the profile lacks current consent
-- Compares `localUser.lastModified` vs Supabase `users.updated_at` (5-second tolerance to avoid false conflicts)
+- Looks up **the account's** cloud row (`owner_id` = signed-in user), not a row with this phone's profile id. No row → `local_newer` ("No cloud record"). A row with a different `id` → `different_profile`: shows both names and timestamps and makes the user choose "Use the Cloud Profile" (pull) or "Replace It With This Phone's" (upload); nothing is replaced silently
+- Same id: compares `localUser.lastModified` vs `users.updated_at` (5-second tolerance to avoid false conflicts)
 - **Upload path:** first upload asks **just-in-time cloud-backup consent** (required checkbox, discloses Sydney hosting and dashboard access), recorded with `saveConsentOnly()`; upserts `cloudRowFromProfile()` (profile + `owner_id` + `consent_given_at` / `consent_version` / `consent_details`); handles ID collision (adopts existing cloud `id`)
-- **Pull path:** `profileFromCloudRow()` → `overwriteLocalUserFromCloud()`, keeping whichever consent record is newer
+- **Pull path:** fetches by `owner_id`, `profileFromCloudRow()` → `overwriteLocalUserFromCloud()` (takes the cloud row's id), keeping whichever consent record is newer
 - Shows a diff card with timestamps when there's a conflict choice
 
 #### `Success` (`src/screens/overlays/Success.tsx`)
@@ -366,7 +367,7 @@ Two backends:
 | `meds` | string[] | Medications |
 | `kin` | Kin[] | Next of kin: `{ n, p, r }` (name, phone, relationship) |
 | `lastModified` | number | Unix timestamp (`Date.now()`) — used for cloud sync comparison |
-| `syncedToTag` | boolean | Whether NFC tag is up to date |
+| `syncedToTag` | boolean | Whether the last tag write succeeded. For display use `isTagCurrent()`, which also checks `tagFormat` and `tagKeyId` |
 | `syncedToCloud` | boolean | Whether cloud record is up to date |
 
 **`CloudSession`** — Stored after login; includes Supabase tokens + role fields
@@ -633,10 +634,11 @@ Report appears in admin dashboard at /dashboard/reports
 ```
 Civilian taps "Sync Cloud" → SyncOverlay
     ↓
-SyncOverlay fetches cloud record from users table
+SyncOverlay fetches the account's cloud record (users where owner_id = signed-in user)
     ↓
-Compares localUser.lastModified vs users.updated_at (5-sec tolerance)
-    ↓
+  No record → "Local is newer" (No cloud record) → Upload
+  Record with a different id → "Your account has a different profile" → user picks pull or upload
+  Same id → compare localUser.lastModified vs users.updated_at (5-sec tolerance):
   If local newer → show diff card → user confirms Upload
   If cloud newer → show diff card → user confirms Pull
   If equal → "Already in sync" state
@@ -841,10 +843,12 @@ Tag encryption keys in `.env` (managed by `scripts/tag-keys.mjs`; rebuild after 
 - [ ] Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` in `.env` for each build target
 - [ ] Set Twilio secrets in Supabase dashboard for the `send-sms` Edge Function
 - [ ] Deploy Edge Functions: `supabase functions deploy send-sms`, `supabase functions deploy delete-account` and `supabase functions deploy responder-keys`
-- [ ] Generate tag keys once (`node scripts/tag-keys.mjs init`) and share the resulting `.env` with the team; use `rotate` / `retire` afterwards, never `init --force` on a deployment with written tags
-- [ ] `npm run test:tags` passes
+- [ ] Every personnel row with role medic/responder has a `city` — `reports_insert_in_city` rejects reports otherwise, and that responder's reports never upload
+- [ ] Generate tag keys once (`node scripts/tag-keys.mjs init`) and back up the resulting `.env` outside the build machine; use `rotate` / `retire` afterwards, never `init --force` on a deployment with written tags
+- [ ] `npm test` passes (Jest + tag crypto)
+- [ ] `package.json` `version` matches the iOS/Android app version (Settings → About shows it)
 - [ ] Enable RLS on `users`, `personnel`, `reports` tables in Supabase dashboard
-- [ ] Run all SQL migrations via `supabase db push` (or apply `policies.sql` → `audit.sql` → `consent.sql` → `users-active.sql` → `20260425000000_create_reports_table.sql` → `20260425000001_users_unique_owner.sql` → `20260911000000_reports_rls_ownership.sql`)
+- [ ] Run all SQL migrations via `supabase db push` (or apply `policies.sql` → `audit.sql` → `consent.sql` → `users-active.sql` → `20260425000000_create_reports_table.sql` → `20260425000001_users_unique_owner.sql` → `20260911000000_reports_rls_ownership.sql` → `20260912000000_consent_and_personnel_guard.sql` → `20260912100000_lock_down_profile_reads.sql`)
 - [ ] Set Supabase OTP rate limit (recommended: 5 per phone per hour)
 - [ ] Test NFC write/read on target Android devices (behavior varies by OEM)
 - [ ] Test OTP SMS delivery on Philippine carriers (Globe, Smart, DITO)
