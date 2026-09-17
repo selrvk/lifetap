@@ -1,0 +1,4 @@
+<resources>
+    <!-- Same as the app's first screen (Home, bg-teal-50), so the launch screen hands over without a flash. -->
+    <color name="splash_background">#F0FDFA</color>
+</resources>

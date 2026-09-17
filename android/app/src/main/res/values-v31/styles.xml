@@ -1,0 +1,10 @@
+<resources>
+
+    <!-- Android 12+ always draws the system splash (app icon on a background);
+         match its background to the app. -->
+    <style name="SplashTheme" parent="AppTheme">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
+    </style>
+
+</resources>

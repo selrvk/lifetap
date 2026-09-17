@@ -1,45 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="24765" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
-    <device id="retina4_7" orientation="portrait" appearance="light"/>
+    <device id="retina6_12" orientation="portrait" appearance="light"/>
     <dependencies>
         <deployment identifier="iOS"/>
         <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="24743"/>
         <capability name="Safe area layout guides" minToolsVersion="9.0"/>
-        <capability name="System colors in document resources" minToolsVersion="11.0"/>
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
     <scenes>
-        <!--View Controller-->
+        <!--Launch Screen: the LifeTap logo on the app's teal-50 background, so the
+            first screen (Home, bg-teal-50) takes over without a colour flash. The
+            colour is fixed rather than systemBackground, which went black in Dark Mode.-->
         <scene sceneID="EHf-IW-A2E">
             <objects>
                 <viewController id="01J-lp-oVM" sceneMemberID="viewController">
                     <view key="view" contentMode="scaleToFill" id="Ze5-6b-2t3">
-                        <rect key="frame" x="0.0" y="0.0" width="375" height="667"/>
+                        <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>
-                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="cross.fill" catalog="system" translatesAutoresizingMaskIntoConstraints="NO" id="EeV-gH-YcP">
-                                <rect key="frame" x="114" y="279.5" width="147" height="108"/>
+                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" image="SplashLogo" translatesAutoresizingMaskIntoConstraints="NO" id="EeV-gH-YcP">
+                                <rect key="frame" x="106.66666666666667" y="336" width="180" height="180"/>
                                 <constraints>
-                                    <constraint firstAttribute="width" relation="greaterThanOrEqual" constant="95" id="BPL-0L-INk"/>
-                                    <constraint firstAttribute="height" constant="108.5" id="iQ8-UF-Ojt"/>
-                                    <constraint firstAttribute="width" constant="147" id="mBF-n6-mpZ"/>
-                                    <constraint firstAttribute="height" relation="greaterThanOrEqual" constant="57.5" id="zbc-ze-4tS"/>
+                                    <constraint firstAttribute="width" constant="180" id="mBF-n6-mpZ"/>
+                                    <constraint firstAttribute="height" constant="180" id="iQ8-UF-Ojt"/>
                                 </constraints>
                             </imageView>
                         </subviews>
                         <viewLayoutGuide key="safeArea" id="Bcu-3y-fUS"/>
-                        <color key="backgroundColor" systemColor="systemBackgroundColor"/>
+                        <color key="backgroundColor" red="0.94117647058823528" green="0.99215686274509807" blue="0.98039215686274506" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                         <constraints>
-                            <constraint firstItem="EeV-gH-YcP" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="3gd-Uf-ZGO"/>
-                            <constraint firstItem="EeV-gH-YcP" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="LPq-t0-TeM"/>
-                            <constraint firstItem="EeV-gH-YcP" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="R59-I0-2EC"/>
-                            <constraint firstItem="EeV-gH-YcP" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="aYp-ZS-BSZ"/>
                             <constraint firstItem="EeV-gH-YcP" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="eh6-AD-dbL"/>
-                            <constraint firstItem="EeV-gH-YcP" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="hXK-zC-DYX"/>
-                            <constraint firstItem="EeV-gH-YcP" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="nJo-vK-zX9"/>
-                            <constraint firstItem="EeV-gH-YcP" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="s9J-VW-yc7"/>
-                            <constraint firstItem="EeV-gH-YcP" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="vuy-bb-0XR"/>
-                            <constraint firstItem="EeV-gH-YcP" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="zcs-pO-tqy"/>
+                            <constraint firstItem="EeV-gH-YcP" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="3gd-Uf-ZGO"/>
                         </constraints>
                     </view>
                 </viewController>
@@ -49,9 +40,6 @@
         </scene>
     </scenes>
     <resources>
-        <image name="cross.fill" catalog="system" width="128" height="116"/>
-        <systemColor name="systemBackgroundColor">
-            <color white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
-        </systemColor>
+        <image name="SplashLogo" width="180" height="180"/>
     </resources>
 </document>

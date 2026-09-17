@@ -225,8 +225,9 @@ export default function Navigation() {
   }, [isResponder, accountId]);
 
   if (isLoading || (isResponder && undertaking === 'checking')) {
+    // Same colour as the native launch screen, so startup doesn't flash.
     return (
-      <View style={{ flex: 1, backgroundColor: '#f8fafc' }} />
+      <View style={{ flex: 1, backgroundColor: '#f0fdfa' }} />
     );
   }
 

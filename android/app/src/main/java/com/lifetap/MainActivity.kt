@@ -1,5 +1,6 @@
 package com.lifetap
 
+import android.os.Bundle
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
@@ -12,6 +13,15 @@ class MainActivity : ReactActivity() {
    * rendering of the component.
    */
   override fun getMainComponentName(): String = "lifetap"
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    // The manifest starts this activity with SplashTheme (logo launch screen);
+    // switch to the normal theme before any React view is created.
+    setTheme(R.style.AppTheme)
+    // null, not savedInstanceState: react-native-screens can't restore its
+    // fragments after the system kills the app, and crashes if asked to.
+    super.onCreate(null)
+  }
 
   /**
    * Returns the instance of the [ReactActivityDelegate]. We use [DefaultReactActivityDelegate]
