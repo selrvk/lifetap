@@ -16,15 +16,14 @@ export const RESPONDER_UNDERTAKING_VERSION = 'resp-2026-09-v1';
 export const NOTICE_IS_DRAFT = true;
 
 // The team is the personal information controller for the capstone pilot —
-// no LGU has adopted LifeTap yet. A team member acts as privacy lead; anything
-// they can't resolve goes to the university's Data Protection Officer.
+// no LGU has adopted LifeTap yet. ArchTech handles every privacy concern
+// itself through one contact address; there is no separate DPO until an LGU
+// (with its own Data Protection Officer) is involved.
 export const CONTROLLER = {
   name:
     'ArchTech, a student capstone team of the BS Information Technology program, ' +
     'Lyceum of the Philippines University – Batangas',
-  dpoContact:
-    'archtechbtg@gmail.com (ArchTech privacy lead). Unresolved concerns may be raised with the ' +
-    'Data Protection Officer of Lyceum of the Philippines University – Batangas.',
+  contact: 'archtechbtg@gmail.com',
   reportRetention:
     'kept only for the capstone pilot and deleted, together with all other pilot data, within 30 days ' +
     'after the project is defended',
@@ -75,7 +74,7 @@ export const NOTICE_SECTIONS: { heading: string; paragraphs: string[] }[] = [
       'LifeTap is a student project under testing, not a government service. No local government unit ' +
         'has adopted it yet. If one does, it becomes the controller and you will be shown a new notice ' +
         'and asked to consent again.',
-      `Contact: ${CONTROLLER.dpoContact}`,
+      `For any question or concern about your data, email ArchTech at ${CONTROLLER.contact}. We handle every request ourselves.`,
     ],
   },
   {
@@ -169,7 +168,7 @@ export const NOTICE_SECTIONS: { heading: string; paragraphs: string[] }[] = [
       'In the app: edit your profile any time; download a copy of your data, change or withdraw consent, ' +
         'erase your tag, and delete your account in Settings → Privacy & Consent. Withdrawing consent is ' +
         'as easy as giving it and costs nothing.',
-      `For anything else, contact the Data Protection Officer: ${CONTROLLER.dpoContact}.`,
+      `For anything else, email ArchTech at ${CONTROLLER.contact}.`,
     ],
   },
   {

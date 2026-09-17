@@ -900,8 +900,8 @@ export default function AccountScreen() {
           )}
 
           <SettingsRow
-            label="Data Protection Officer"
-            sub={CONTROLLER.dpoContact}
+            label="Privacy questions or concerns"
+            sub={`Email ArchTech at ${CONTROLLER.contact}`}
             last
           />
         </SettingsCard>

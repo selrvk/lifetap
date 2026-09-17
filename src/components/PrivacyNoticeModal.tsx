@@ -38,7 +38,7 @@ export default function PrivacyNoticeModal({
           {NOTICE_IS_DRAFT && (
             <View className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4">
               <Text className="text-amber-800 text-xs">
-                Draft — pending review by the LGU’s Data Protection Officer.
+                Draft — pending review.
               </Text>
             </View>
           )}
