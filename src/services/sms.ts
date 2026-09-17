@@ -1,17 +1,8 @@
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { ReportEntry } from '../types/responder';
-
-// Must match the send-sms Edge Function, which only accepts PH mobile numbers.
-const PH_MOBILE = /^\+639\d{9}$/;
-
-function normalizePhone(raw: string): string {
-  const digits = raw.replace(/[^\d+]/g, '');
-  if (digits.startsWith('+')) return digits;
-  if (digits.startsWith('0')) return `+63${digits.slice(1)}`;
-  if (digits.startsWith('63')) return `+${digits}`;
-  return `+63${digits}`;
-}
+// The send-sms Edge Function only accepts PH mobile numbers.
+import { PH_MOBILE_E164, toPHE164 } from './phone';
 
 const HTTP_ERRORS: Record<number, string> = {
   401: 'your session has expired — sign in again',
@@ -32,7 +23,7 @@ export async function sendVictimAlert(
   location: string
 ): Promise<SendVictimAlertResult> {
   const numbers = [
-    ...new Set(victim.kin.map((k) => normalizePhone(k.p)).filter((n) => PH_MOBILE.test(n))),
+    ...new Set(victim.kin.map((k) => toPHE164(k.p)).filter((n) => PH_MOBILE_E164.test(n))),
   ];
 
   if (numbers.length === 0) {

@@ -87,4 +87,14 @@ describe('getSyncStatus — when the Home screen asks for a tag rewrite', () => 
     expect(await S.getSyncStatus(1)).toBe('IN_SYNC');
     expect(await S.getSyncStatus(2)).toBe('TAG_BEHIND');
   });
+
+  // Settings and Profile show tag status too; they used to read syncedToTag
+  // alone and reported plaintext tags as "Synced" while Home said otherwise.
+  test('isTagCurrent agrees with Home even when syncedToTag is true', async () => {
+    await setup({ tagFormat: undefined });
+    const user = (await S.getLocalUser())!;
+    expect(user.syncedToTag).toBe(true);
+    expect(S.isTagCurrent(user, 1)).toBe(false);
+    expect(S.isTagCurrent({ ...user, tagFormat: 2 }, 1)).toBe(true);
+  });
 });

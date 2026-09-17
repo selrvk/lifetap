@@ -452,6 +452,16 @@ export type SyncStatus = 'IN_SYNC' | 'TAG_BEHIND' | 'CLOUD_BEHIND' | 'NOT_SYNCED
 // read here is a Keychain round trip, and HomeScreen needs both anyway.
 // currentTagKeyId: the responder key this build seals new tags to
 // (crypto/keys.currentResponderKeyId), or null if unknown.
+// Whether the tag holds this profile in the current format. The syncedToTag
+// flag alone isn't enough: a tag written before encryption, or sealed to a
+// responder key that has since been rotated, still needs rewriting. Every
+// screen that shows tag status must use this, not syncedToTag.
+export function isTagCurrent(user: LocalUser, currentTagKeyId: number | null): boolean {
+  const sealedTo = user.tagKeyId ?? 1;
+  const keyCurrent = user.is_public || currentTagKeyId === null || sealedTo === currentTagKeyId;
+  return user.syncedToTag && user.tagFormat === TAG_FORMAT_VERSION && keyCurrent;
+}
+
 export function syncStatusOf(
   user: LocalUser | null,
   loggedIn: boolean,
@@ -459,11 +469,7 @@ export function syncStatusOf(
 ): SyncStatus {
   if (!user) return 'NOT_SYNCED';
 
-  // Out of date if the tag holds plaintext (written before encryption), or
-  // its medical section is sealed to a responder key that has been rotated.
-  const sealedTo = user.tagKeyId ?? 1;
-  const keyCurrent = user.is_public || currentTagKeyId === null || sealedTo === currentTagKeyId;
-  const tagCurrent = user.syncedToTag && user.tagFormat === TAG_FORMAT_VERSION && keyCurrent;
+  const tagCurrent = isTagCurrent(user, currentTagKeyId);
 
   if (!tagCurrent && (!user.syncedToCloud || !loggedIn)) return 'NOT_SYNCED';
   if (!tagCurrent) return 'TAG_BEHIND';

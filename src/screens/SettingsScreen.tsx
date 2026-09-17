@@ -27,15 +27,20 @@ import { CONTROLLER, PRIVACY_NOTICE_VERSION } from '../legal/privacyNotice';
 import { supabase, signOutSupabase } from '../lib/supabase';
 import { useApp } from '../context/AppContext';
 import { saveLoginSession } from '../services/personnel';
+import { PH_MOBILE_E164, toPHE164 } from '../services/phone';
 import {
   getLocalUser,
   getCloudSession,
   clearCloudSession,
   clearLocalUser,
   updateLocalUser,
+  isTagCurrent,
   LocalUser,
   CloudSession,
 } from '../storage/asyncStorage';
+import { currentResponderKeyId } from '../crypto/keys';
+// Keep package.json's version in step with the iOS/Android app version.
+import { version as appVersion } from '../../package.json';
 type LoginStep = 'phone' | 'otp' | 'loading';
 
 
@@ -97,20 +102,14 @@ function LoginSheet({ onSuccess, onCancel }: {
   const [otp, setOtp] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  function formatPhone(raw: string): string {
-    const digits = raw.replace(/\D/g, '');
-    if (digits.startsWith('0')) return '+63' + digits.slice(1);
-    if (digits.startsWith('63')) return '+' + digits;
-    if (digits.startsWith('+63')) return digits;
-    return '+63' + digits;
-  }
+  const formatPhone = toPHE164;
 
   async function handleSendOTP() {
     setError(null);
     const formatted = formatPhone(phone);
 
-    if (formatted.length < 12) {
-      setError('Please enter a valid phone number');
+    if (!PH_MOBILE_E164.test(formatted)) {
+      setError('Enter a valid PH mobile number (e.g. 09171234567)');
       return;
     }
 
@@ -406,13 +405,16 @@ export default function AccountScreen() {
     }
   }
 
-  function promptEraseTag() {
+  // Runs after the profile is deleted, so the tag's owner id is passed in —
+  // WriteNFC can no longer read it from the phone, and without it the user's
+  // own tag would be flagged as "someone else's LifeTap".
+  function promptEraseTag(ownId: string) {
     Alert.alert(
       'Erase your tag too?',
       'Your LifeTap tag still holds your information. Erase it now by holding it to your phone, or do it later from Settings.',
       [
         { text: 'Later', style: 'cancel' },
-        { text: 'Erase Tag', onPress: () => navigation.navigate('WriteNFC', { mode: 'erase' }) },
+        { text: 'Erase Tag', onPress: () => navigation.navigate('WriteNFC', { mode: 'erase', ownId }) },
       ]
     );
   }
@@ -430,7 +432,8 @@ export default function AccountScreen() {
           text: 'Withdraw & Delete',
           style: 'destructive',
           onPress: async () => {
-            if (await eraseEverything()) promptEraseTag();
+            const ownId = user?.id;
+            if ((await eraseEverything()) && ownId) promptEraseTag(ownId);
           },
         },
       ]
@@ -484,7 +487,8 @@ export default function AccountScreen() {
                   style: 'destructive',
                   onPress: async () => {
                     if (!session) return;
-                    await eraseEverything();
+                    const ownId = user?.id;
+                    if ((await eraseEverything()) && ownId) promptEraseTag(ownId);
                   },
                 },
               ]
@@ -584,6 +588,8 @@ export default function AccountScreen() {
       ]
     );
   }
+
+  const tagCurrent = user ? isTagCurrent(user, currentResponderKeyId()) : false;
 
   // ── MAIN ACCOUNT VIEW ──
   return (
@@ -731,8 +737,8 @@ export default function AccountScreen() {
                 label="NFC Tag"
                 right={
                   <Text className="text-xs font-semibold"
-                    style={{ color: user.syncedToTag ? '#0f766e' : '#f59e0b' }}>
-                    {user.syncedToTag ? '✅ Synced' : '⚠️ Out of date'}
+                    style={{ color: tagCurrent ? '#0f766e' : '#f59e0b' }}>
+                    {tagCurrent ? '✅ Synced' : '⚠️ Out of date'}
                   </Text>
                 }
               />
@@ -873,7 +879,7 @@ export default function AccountScreen() {
         <SettingsCard>
           <SettingsRow
             label="Version"
-            right={<Text className="text-slate-400 text-xs">1.0.0</Text>}
+            right={<Text className="text-slate-400 text-xs">{appVersion}</Text>}
           />
           <SettingsRow
             label="LifeTap"

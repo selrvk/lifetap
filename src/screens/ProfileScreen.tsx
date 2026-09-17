@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -27,13 +27,17 @@ import { useApp } from '../context/AppContext';
 import {
   saveLocalUser,
   getLocalUser,
+  getCloudSession,
   updateLocalUser,
   overwriteLocalUserFromCloud,
   hasCurrentConsent,
+  isTagCurrent,
   LocalUser,
   Kin,
 } from '../storage/asyncStorage';
+import { currentResponderKeyId } from '../crypto/keys';
 import { saveLoginSession } from '../services/personnel';
+import { PH_MOBILE_E164, toPHE164 } from '../services/phone';
 import { profileFromCloudRow } from '../services/cloudProfile';
 import ConsentForm, {
   ConsentDraft,
@@ -920,7 +924,14 @@ function GateScreen({
 // FIX 5: EXISTING ACCOUNT — phone OTP + cloud restore
 // ─────────────────────────────────────────────
 
-type LoginStep = 'phone' | 'otp' | 'loading' | 'restoring';
+type LoginStep =
+  | 'checking'
+  | 'signed_in'
+  | 'phone'
+  | 'otp'
+  | 'loading'
+  | 'restoring'
+  | 'restore_failed';
 
 function ExistingAccountScreen({
   onRestored,
@@ -931,24 +942,63 @@ function ExistingAccountScreen({
   onNotFound: () => void;
   onCancel: () => void;
 }) {
-  const [step, setStep] = useState<LoginStep>('phone');
+  const [step, setStep] = useState<LoginStep>('checking');
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [signedInPhone, setSignedInPhone] = useState<string | null>(null);
+  const accountIdRef = useRef<string | null>(null);
   const { refreshSession } = useApp();
 
-  function formatPhone(raw: string): string {
-    const digits = raw.replace(/\D/g, '');
-    if (digits.startsWith('0')) return '+63' + digits.slice(1);
-    if (digits.startsWith('63')) return '+' + digits;
-    return '+63' + digits;
+  const formatPhone = toPHE164;
+
+  // Already signed in (e.g. from Settings)? Restore that account's profile
+  // instead of asking for another code.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([supabase.auth.getSession(), getCloudSession()]).then(([{ data }, cloud]) => {
+      if (cancelled) return;
+      if (data.session && cloud && cloud.user_id === data.session.user.id) {
+        accountIdRef.current = data.session.user.id;
+        setSignedInPhone(cloud.phone);
+        setStep('signed_in');
+      } else {
+        setStep('phone');
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Restore by owner_id (Supabase user UUID) — guaranteed unique per account.
+  async function restore(userId: string) {
+    setError(null);
+    setStep('restoring');
+    const { data: userData, error: restoreError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('owner_id', userId)
+      .maybeSingle();
+
+    if (restoreError) {
+      // A failed lookup is NOT "no profile": treating it that way sent people
+      // into onboarding, and syncing the new profile overwrote their backup.
+      setStep('restore_failed');
+      return;
+    }
+    if (userData) {
+      const restored = profileFromCloudRow(userData);
+      await overwriteLocalUserFromCloud(restored);
+      onRestored(restored);
+    } else {
+      onNotFound();
+    }
   }
 
   async function handleSendOTP() {
     setError(null);
     const formatted = formatPhone(phone);
-    if (formatted.length < 12) {
-      setError('Enter a valid phone number');
+    if (!PH_MOBILE_E164.test(formatted)) {
+      setError('Enter a valid PH mobile number (e.g. 09171234567)');
       return;
     }
     setStep('loading');
@@ -985,26 +1035,53 @@ function ExistingAccountScreen({
     await saveLoginSession(data.session, formatted);
     await refreshSession();
 
-    // Restore by owner_id (Supabase user UUID) — guaranteed unique per account.
-    // Searching by phn could return the wrong row if duplicates exist.
-    setStep('restoring');
-    const { data: userData } = await supabase
-      .from('users')
-      .select('*')
-      .eq('owner_id', data.session.user.id)
-      .maybeSingle();
-
-    if (userData) {
-      const restored = profileFromCloudRow(userData);
-      await overwriteLocalUserFromCloud(restored);
-      onRestored(restored);
-    } else {
-      // Signed in but no cloud profile found — proceed to onboarding
-      onNotFound();
-    }
+    accountIdRef.current = data.session.user.id;
+    await restore(data.session.user.id);
   }
 
-  if (step === 'loading' || step === 'restoring') {
+  if (step === 'signed_in' || step === 'restore_failed') {
+    const failed = step === 'restore_failed';
+    return (
+      <SafeAreaView className="flex-1 bg-teal-50">
+        <ScrollView
+          className="flex-1"
+          contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 40 }}
+        >
+          <Text className="text-teal-900 text-lg font-bold mb-1">
+            {failed ? 'Couldn’t reach LifeTap Cloud' : 'Restore from Cloud'}
+          </Text>
+          <Text className="text-slate-400 text-sm mb-6 leading-5">
+            {failed
+              ? 'We couldn’t check whether this account has a saved profile. You’re still signed in — check your connection and try again.'
+              : `You’re signed in as ${signedInPhone}. Restore the profile saved to this account?`}
+          </Text>
+          <TouchableOpacity
+            onPress={() => accountIdRef.current && restore(accountIdRef.current)}
+            className="bg-teal-600 rounded-2xl py-4 items-center mb-3"
+            activeOpacity={0.85}
+          >
+            <Text className="text-white font-semibold">
+              {failed ? 'Try Again' : 'Restore Profile'}
+            </Text>
+          </TouchableOpacity>
+          {!failed && (
+            <TouchableOpacity
+              onPress={() => setStep('phone')}
+              className="bg-white border border-teal-100 rounded-2xl py-4 items-center mb-3"
+              activeOpacity={0.85}
+            >
+              <Text className="text-teal-700 font-semibold">Use a different number</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={onCancel}>
+            <Text className="text-slate-400 text-sm text-center">Cancel</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  if (step === 'checking' || step === 'loading' || step === 'restoring') {
     return (
       <SafeAreaView className="flex-1 bg-teal-50 items-center justify-center px-6">
         <ActivityIndicator size="large" color="#0f766e" />
@@ -1937,7 +2014,7 @@ function ProfileView({
 
         <SectionCard title="Sync Status">
           <SectionItem
-            label={`Tag  —  ${user.syncedToTag ? '✅ Synced' : '⚠️ Out of date'}`}
+            label={`Tag  —  ${isTagCurrent(user, currentResponderKeyId()) ? '✅ Synced' : '⚠️ Out of date'}`}
           />
           <SectionItem
             label={`Cloud  —  ${user.syncedToCloud ? '✅ Synced' : '⚠️ Out of date'}`}

@@ -148,7 +148,9 @@ export async function readNfcTag(): Promise<TagProfile | null> {
   // system sheet dismisses quickly and a key refresh never holds it open.
   let records: NdefRecordLike[];
   try {
-    await NfcManager.requestTechnology(NfcTech.Ndef);
+    await NfcManager.requestTechnology(NfcTech.Ndef, {
+      alertMessage: 'Hold your phone near the LifeTap tag',
+    });
     const tag = await NfcManager.getTag();
     records = (tag?.ndefMessage ?? []) as NdefRecordLike[];
   } catch (e) {

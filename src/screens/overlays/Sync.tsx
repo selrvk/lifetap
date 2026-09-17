@@ -23,6 +23,9 @@ type SyncStep =
   | 'in_sync'
   | 'local_newer'
   | 'cloud_newer'
+  // The account's cloud profile isn't the one on this phone (e.g. local data
+  // was cleared and a new profile created). The user picks which to keep.
+  | 'different_profile'
   | 'uploading'
   | 'pulling'
   | 'success'
@@ -133,10 +136,45 @@ function WorkingStep({ label, sub }: { label: string; sub: string }) {
 // ─────────────────────────────────────────────
 // RESULT STEP
 // ─────────────────────────────────────────────
+function formatWhen(value: number | string | null | undefined): string {
+  if (value == null) return '—';
+  return new Date(value).toLocaleString('en-PH', {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+// Just-in-time consent: cloud backup is optional and asked only before an upload.
+function BackupConsent({
+  localUser,
+  checked,
+  onChange,
+}: {
+  localUser: LocalUser | null;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  if (localUser?.consent?.cloudBackup) return null;
+  return (
+    <View className="w-full bg-white border border-slate-100 rounded-2xl px-4 mb-4">
+      <ConsentCheckbox
+        checked={checked}
+        onChange={onChange}
+        required
+        label={
+          'Back up my profile, including medical information, to LifeTap Cloud ' +
+          '(Supabase, hosted in Sydney, Australia). Authorized personnel for my ' +
+          'city can view it in the LifeTap dashboard.'
+        }
+      />
+    </View>
+  );
+}
+
 function ResultStep({
   step,
   localUser,
   cloudUpdatedAt,
+  cloudName,
   backupConsent,
   onBackupConsentChange,
   onUpload,
@@ -147,6 +185,7 @@ function ResultStep({
   step: SyncStep;
   localUser: LocalUser | null;
   cloudUpdatedAt: string | null;
+  cloudName: string | null;
   backupConsent: boolean;
   onBackupConsentChange: (v: boolean) => void;
   onUpload: () => void;
@@ -213,40 +252,22 @@ function ResultStep({
           <View className="flex-row justify-between mb-1">
             <Text className="text-xs text-slate-400">Local modified</Text>
             <Text className="text-xs text-slate-700 font-semibold">
-              {localUser
-                ? new Date(localUser.lastModified).toLocaleString('en-PH', {
-                    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                  })
-                : '—'}
+              {formatWhen(localUser?.lastModified)}
             </Text>
           </View>
           <View className="flex-row justify-between">
             <Text className="text-xs text-slate-400">Cloud modified</Text>
             <Text className="text-xs text-slate-700 font-semibold">
-              {cloudUpdatedAt
-                ? new Date(cloudUpdatedAt).toLocaleString('en-PH', {
-                    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                  })
-                : 'No cloud record'}
+              {cloudUpdatedAt ? formatWhen(cloudUpdatedAt) : 'No cloud record'}
             </Text>
           </View>
         </View>
 
-        {/* Just-in-time consent: cloud backup is optional and asked only here. */}
-        {!localUser?.consent?.cloudBackup && (
-          <View className="w-full bg-white border border-slate-100 rounded-2xl px-4 mb-4">
-            <ConsentCheckbox
-              checked={backupConsent}
-              onChange={onBackupConsentChange}
-              required
-              label={
-                'Back up my profile, including medical information, to LifeTap Cloud ' +
-                '(Supabase, hosted in Sydney, Australia). Authorized LGU personnel for my ' +
-                'city can view it in the LifeTap dashboard.'
-              }
-            />
-          </View>
-        )}
+        <BackupConsent
+          localUser={localUser}
+          checked={backupConsent}
+          onChange={onBackupConsentChange}
+        />
 
         <TouchableOpacity
           onPress={onUpload}
@@ -256,6 +277,65 @@ function ResultStep({
           activeOpacity={0.85}
         >
           <Text className="text-white font-semibold">Upload to Cloud</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onCancel}>
+          <Text className="text-red-400 font-semibold text-sm">Cancel</Text>
+        </TouchableOpacity>
+      </>
+    );
+  }
+
+  if (step === 'different_profile') {
+    const uploadBlocked = !localUser?.consent?.cloudBackup && !backupConsent;
+    return (
+      <>
+        <View className="w-20 h-20 rounded-full bg-amber-50 items-center justify-center mb-5">
+          <Text style={{ fontSize: 36 }}>⚠️</Text>
+        </View>
+        <Text className="text-blue-900 text-lg font-bold mb-1 text-center">
+          Your account has a different profile
+        </Text>
+        <Text className="text-slate-400 text-sm mb-5 text-center leading-5">
+          This account already has a LifeTap profile in the cloud, and it isn’t the one on
+          this phone. Choose which one to keep — the other is replaced.
+        </Text>
+
+        <View className="w-full bg-blue-50 rounded-2xl p-4 mb-5">
+          <View className="flex-row justify-between mb-1">
+            <Text className="text-xs text-slate-400">On this phone</Text>
+            <Text className="text-xs text-slate-700 font-semibold">
+              {localUser?.n || '—'} · {formatWhen(localUser?.lastModified)}
+            </Text>
+          </View>
+          <View className="flex-row justify-between">
+            <Text className="text-xs text-slate-400">In the cloud</Text>
+            <Text className="text-xs text-slate-700 font-semibold">
+              {cloudName || '—'} · {formatWhen(cloudUpdatedAt)}
+            </Text>
+          </View>
+        </View>
+
+        <TouchableOpacity
+          onPress={onPull}
+          className="w-full bg-blue-600 rounded-2xl py-4 items-center mb-3"
+          activeOpacity={0.85}
+        >
+          <Text className="text-white font-semibold">Use the Cloud Profile</Text>
+        </TouchableOpacity>
+
+        <BackupConsent
+          localUser={localUser}
+          checked={backupConsent}
+          onChange={onBackupConsentChange}
+        />
+        <TouchableOpacity
+          onPress={onUpload}
+          disabled={uploadBlocked}
+          className="w-full bg-white border border-blue-200 rounded-2xl py-4 items-center mb-3"
+          style={{ opacity: uploadBlocked ? 0.5 : 1 }}
+          activeOpacity={0.85}
+        >
+          <Text className="text-blue-700 font-semibold">Replace It With This Phone’s</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onCancel}>
           <Text className="text-red-400 font-semibold text-sm">Cancel</Text>
@@ -280,21 +360,13 @@ function ResultStep({
           <View className="flex-row justify-between mb-1">
             <Text className="text-xs text-slate-400">Local modified</Text>
             <Text className="text-xs text-slate-700 font-semibold">
-              {localUser
-                ? new Date(localUser.lastModified).toLocaleString('en-PH', {
-                    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                  })
-                : '—'}
+              {formatWhen(localUser?.lastModified)}
             </Text>
           </View>
           <View className="flex-row justify-between">
             <Text className="text-xs text-slate-400">Cloud modified</Text>
             <Text className="text-xs text-slate-700 font-semibold">
-              {cloudUpdatedAt
-                ? new Date(cloudUpdatedAt).toLocaleString('en-PH', {
-                    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                  })
-                : '—'}
+              {formatWhen(cloudUpdatedAt)}
             </Text>
           </View>
         </View>
@@ -371,6 +443,7 @@ export default function SyncOverlay() {
   const [step, setStep] = useState<SyncStep>('comparing');
   const [localUser, setLocalUser] = useState<LocalUser | null>(null);
   const [cloudUpdatedAt, setCloudUpdatedAt] = useState<string | null>(null);
+  const [cloudName, setCloudName] = useState<string | null>(null);
   const [backupConsent, setBackupConsent] = useState(false);
 
   function close() {
@@ -402,15 +475,17 @@ export default function SyncOverlay() {
       return;
     }
 
-    // Fetch cloud record
+    // The account's cloud profile, looked up by owner — the same row an upload
+    // would write to. Looking it up by this phone's profile id reported "no
+    // cloud record" for an account that had one under another id, and the
+    // upload then silently replaced it.
     const { data, error } = await supabase
       .from('users')
-      .select('updated_at')
-      .eq('id', user.id)
-      .single();
+      .select('id, n, updated_at')
+      .eq('owner_id', session.user_id)
+      .maybeSingle();
 
-    if (error && error.code !== 'PGRST116') {
-      // PGRST116 = no rows found (first upload)
+    if (error) {
       setStep('error');
       return;
     }
@@ -418,11 +493,18 @@ export default function SyncOverlay() {
     if (!data) {
       // No cloud record yet — local is always newer
       setCloudUpdatedAt(null);
+      setCloudName(null);
       setStep('local_newer');
       return;
     }
 
     setCloudUpdatedAt(data.updated_at);
+    setCloudName(data.n ?? null);
+
+    if (data.id !== user.id) {
+      setStep('different_profile');
+      return;
+    }
 
     const localTime = user.lastModified;
     const cloudTime = new Date(data.updated_at).getTime();
@@ -495,11 +577,16 @@ export default function SyncOverlay() {
     if (!localUser) return;
     setStep('pulling');
 
+    const session = await getCloudSession();
+    if (!session) { setStep('error'); return; }
+
+    // By owner, like compare(): also covers taking the account's cloud profile
+    // in place of a different one on this phone.
     const { data, error } = await supabase
       .from('users')
       .select('*')
-      .eq('id', localUser.id)
-      .single();
+      .eq('owner_id', session.user_id)
+      .maybeSingle();
 
     if (error || !data) {
       setStep('error');
@@ -544,12 +631,14 @@ export default function SyncOverlay() {
         step === 'in_sync' ||
         step === 'local_newer' ||
         step === 'cloud_newer' ||
+        step === 'different_profile' ||
         step === 'success' ||
         step === 'error') && (
         <ResultStep
           step={step}
           localUser={localUser}
           cloudUpdatedAt={cloudUpdatedAt}
+          cloudName={cloudName}
           backupConsent={backupConsent}
           onBackupConsentChange={setBackupConsent}
           onUpload={handleUpload}

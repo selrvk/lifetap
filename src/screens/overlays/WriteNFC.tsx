@@ -346,6 +346,7 @@ export default function WriteNFC() {
   const navigation = useNavigation();
   const route = useRoute<any>();
   const mode: Mode = route.params?.mode === 'erase' ? 'erase' : 'write';
+  const ownIdParam: string | undefined = route.params?.ownId;
   const [step, setStep] = useState<Step>('loading');
   const [user, setUser] = useState<LocalUser | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -377,7 +378,7 @@ export default function WriteNFC() {
     let result: TagWriteResult;
     try {
       result = mode === 'erase'
-        ? await eraseNfcTag({ ownId: user?.id, force })
+        ? await eraseNfcTag({ ownId: user?.id ?? ownIdParam, force })
         : await writeNfcTag(tagProfileOf(user!), { force });
     } catch (e) {
       if (e instanceof Error && e.message === NFC_CANCELLED) {

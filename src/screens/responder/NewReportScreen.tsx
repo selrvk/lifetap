@@ -22,6 +22,13 @@ function todayIso(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+// A real calendar date in YYYY-MM-DD (rejects 2026-02-30 and friends).
+function isIsoDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
 function Field({
   label,
   value,
@@ -68,6 +75,10 @@ export default function NewReportScreen() {
   async function onSubmit() {
     if (!name.trim() || !location.trim() || !date.trim()) {
       Alert.alert('Missing fields', 'Report name, location, and date are required.');
+      return;
+    }
+    if (!isIsoDate(date.trim())) {
+      Alert.alert('Invalid date', 'Enter the date as YYYY-MM-DD, for example 2026-09-17.');
       return;
     }
 
