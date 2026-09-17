@@ -8,3 +8,7 @@
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
 # Add any project specific keep options here:
+
+# react-native-config reads SUPABASE_URL / SUPABASE_ANON_KEY from BuildConfig
+# via reflection — without this R8 renames the class and they come back empty.
+-keep class com.lifetap.BuildConfig { *; }
