@@ -18,7 +18,10 @@ import ReportsScreen from '../screens/responder/ReportsScreen';
 import ResponderSettingsScreen from '../screens/responder/SettingsScreen';
 import NewReportScreen from '../screens/responder/NewReportScreen';
 import ReportDetailScreen from '../screens/responder/ReportDetailScreen';
+import UndertakingScreen from '../screens/responder/UndertakingScreen';
 import { useApp } from '../context/AppContext';
+import { getResponderUndertaking } from '../storage/asyncStorage';
+import { RESPONDER_UNDERTAKING_VERSION } from '../legal/privacyNotice';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -31,7 +34,7 @@ const TAB_ICONS: Record<string, any> = {
   Reports: require('./../../assets/icons/pencil-icon.png'),
 };
 
-function CustomTabBar({ state, descriptors, navigation }: any) {
+function CustomTabBar({ state, navigation }: any) {
   const tabCount = state.routes.length;
   const animatedValue = useRef(new Animated.Value(state.index)).current;
   const [barWidth, setBarWidth] = useState(0);
@@ -48,7 +51,7 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
       tension: 70,
       friction: 10,
     }).start();
-  }, [state.index, barWidth]);
+  }, [state.index, barWidth, animatedValue]);
 
   const translateX = barWidth === 0
     ? new Animated.Value(0)
@@ -200,16 +203,37 @@ function ResponderTabNavigator() {
 }
 
 export default function Navigation() {
-  const { role, isLoading } = useApp();
+  const { role, isLoading, accountId } = useApp();
+  const isResponder =
+    role === 'medic' || role === 'responder' || role === 'admin';
 
-  if (isLoading) {
+  // Responder mode stays locked until this account has accepted the current
+  // confidentiality undertaking.
+  const [undertaking, setUndertaking] = useState<'checking' | 'required' | 'accepted'>('checking');
+  useEffect(() => {
+    if (!isResponder || !accountId) {
+      setUndertaking('checking');
+      return;
+    }
+    let cancelled = false;
+    getResponderUndertaking(accountId).then(u => {
+      if (!cancelled) {
+        setUndertaking(u?.version === RESPONDER_UNDERTAKING_VERSION ? 'accepted' : 'required');
+      }
+    });
+    return () => { cancelled = true; };
+  }, [isResponder, accountId]);
+
+  if (isLoading || (isResponder && undertaking === 'checking')) {
     return (
       <View style={{ flex: 1, backgroundColor: '#f8fafc' }} />
     );
   }
 
-  const isResponder =
-    role === 'medic' || role === 'responder' || role === 'admin';
+  if (isResponder && undertaking === 'required') {
+    return <UndertakingScreen onAccepted={() => setUndertaking('accepted')} />;
+  }
+
   const MainComponent = isResponder ? ResponderTabNavigator : TabNavigator;
 
   return (

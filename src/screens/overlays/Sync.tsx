@@ -4,16 +4,21 @@ import { useNavigation } from '@react-navigation/native';
 import NFCSheet, { NFCSheetRef } from './../../components/NFCsheet';
 import { RippleRing, BouncingDot } from './../../components/NFCanimations';
 import { supabase } from '../../lib/supabase';
+import ConsentCheckbox from './../../components/ConsentCheckbox';
 import {
   getLocalUser,
   updateLocalUser,
   getCloudSession,
   markSyncedToCloud,
   overwriteLocalUserFromCloud,
+  saveConsentOnly,
+  hasCurrentConsent,
   LocalUser,
 } from '../../storage/asyncStorage';
+import { cloudRowFromProfile, profileFromCloudRow } from '../../services/cloudProfile';
 
 type SyncStep =
+  | 'needs_consent'
   | 'comparing'
   | 'in_sync'
   | 'local_newer'
@@ -132,6 +137,8 @@ function ResultStep({
   step,
   localUser,
   cloudUpdatedAt,
+  backupConsent,
+  onBackupConsentChange,
   onUpload,
   onPull,
   onDone,
@@ -140,11 +147,35 @@ function ResultStep({
   step: SyncStep;
   localUser: LocalUser | null;
   cloudUpdatedAt: string | null;
+  backupConsent: boolean;
+  onBackupConsentChange: (v: boolean) => void;
   onUpload: () => void;
   onPull: () => void;
   onDone: () => void;
   onCancel: () => void;
 }) {
+  if (step === 'needs_consent') {
+    return (
+      <>
+        <View className="w-20 h-20 rounded-full bg-amber-50 items-center justify-center mb-5">
+          <Text style={{ fontSize: 36 }}>📄</Text>
+        </View>
+        <Text className="text-blue-900 text-lg font-bold mb-1">Review the privacy notice first</Text>
+        <Text className="text-slate-400 text-sm mb-8 text-center leading-5">
+          Open the Profile tab to review and accept how LifeTap uses your data,
+          then come back to sync.
+        </Text>
+        <TouchableOpacity
+          onPress={onCancel}
+          className="w-full bg-blue-600 rounded-2xl py-4 items-center"
+          activeOpacity={0.85}
+        >
+          <Text className="text-white font-semibold">OK</Text>
+        </TouchableOpacity>
+      </>
+    );
+  }
+
   if (step === 'in_sync') {
     return (
       <>
@@ -201,9 +232,27 @@ function ResultStep({
           </View>
         </View>
 
+        {/* Just-in-time consent: cloud backup is optional and asked only here. */}
+        {!localUser?.consent?.cloudBackup && (
+          <View className="w-full bg-white border border-slate-100 rounded-2xl px-4 mb-4">
+            <ConsentCheckbox
+              checked={backupConsent}
+              onChange={onBackupConsentChange}
+              required
+              label={
+                'Back up my profile, including medical information, to LifeTap Cloud ' +
+                '(Supabase, hosted in Sydney, Australia). Authorized LGU personnel for my ' +
+                'city can view it in the LifeTap dashboard.'
+              }
+            />
+          </View>
+        )}
+
         <TouchableOpacity
           onPress={onUpload}
+          disabled={!localUser?.consent?.cloudBackup && !backupConsent}
           className="w-full bg-blue-600 rounded-2xl py-4 items-center mb-3"
+          style={{ opacity: !localUser?.consent?.cloudBackup && !backupConsent ? 0.5 : 1 }}
           activeOpacity={0.85}
         >
           <Text className="text-white font-semibold">Upload to Cloud</Text>
@@ -322,6 +371,7 @@ export default function SyncOverlay() {
   const [step, setStep] = useState<SyncStep>('comparing');
   const [localUser, setLocalUser] = useState<LocalUser | null>(null);
   const [cloudUpdatedAt, setCloudUpdatedAt] = useState<string | null>(null);
+  const [backupConsent, setBackupConsent] = useState(false);
 
   function close() {
     sheetRef.current?.close();
@@ -346,6 +396,11 @@ export default function SyncOverlay() {
     }
 
     setLocalUser(user);
+
+    if (!hasCurrentConsent(user)) {
+      setStep('needs_consent');
+      return;
+    }
 
     // Fetch cloud record
     const { data, error } = await supabase
@@ -385,11 +440,23 @@ export default function SyncOverlay() {
   }
 
   async function handleUpload() {
-    if (!localUser) return;
+    if (!localUser?.consent) return;
+    const needsBackupConsent = !localUser.consent.cloudBackup;
+    if (needsBackupConsent && !backupConsent) return;
     setStep('uploading');
 
     const session = await getCloudSession();
     if (!session) { setStep('error'); return; }
+
+    // Record the just-in-time cloud-backup consent before anything is uploaded.
+    // Not a profile edit, so it doesn't bump lastModified or touch the tag.
+    let uploadUser: LocalUser = localUser;
+    if (needsBackupConsent) {
+      const now = Date.now();
+      const consent = { ...localUser.consent, cloudBackup: true, cloudBackupAt: now, updatedAt: now };
+      uploadUser = { ...localUser, consent };
+      await saveConsentOnly(consent);
+    }
 
     // If this account already owns a cloud profile with a different id (e.g. user
     // cleared local data and re-onboarded), adopt the existing cloud id so the
@@ -403,29 +470,16 @@ export default function SyncOverlay() {
 
     if (existing && existing.id !== localUser.id) {
       profileId = existing.id;
-      await updateLocalUser({ id: profileId } as any);
+      // Upload what was just saved: updateLocalUser stamps a new lastModified,
+      // and uploading the older one would leave the cloud row permanently
+      // "behind" the phone, so every later check said local was newer.
+      const adopted = await updateLocalUser({ id: profileId } as any);
+      if (adopted) uploadUser = adopted;
     }
 
     const { error } = await supabase
       .from('users')
-      .upsert({
-        id: profileId,
-        n: localUser.n,
-        dob: localUser.dob,
-        bt: localUser.bt,
-        brg: localUser.brg,
-        cty: localUser.cty,
-        phn: localUser.phn,
-        rel: localUser.rel,
-        od: localUser.od,
-        a: localUser.a,
-        c: localUser.c,
-        meds: localUser.meds,
-        kin: localUser.kin,
-        is_public: localUser.is_public,
-        owner_id: session.user_id,
-        updated_at: new Date(localUser.lastModified).toISOString(),
-      });
+      .upsert(cloudRowFromProfile(uploadUser, profileId, session.user_id));
 
     if (error) {
       console.error('Upload error:', error.message);
@@ -452,12 +506,16 @@ export default function SyncOverlay() {
       return;
     }
 
-    await overwriteLocalUserFromCloud({
-      ...data,
-      lastModified: new Date(data.updated_at).getTime(),
-      syncedToTag: false,
-      syncedToCloud: true,
-    });
+    // Consent belongs to the person, not to a data version: keep whichever
+    // record is more recent, so pulling an older cloud row can't undo a
+    // consent choice made on this phone.
+    const pulled = profileFromCloudRow(data);
+    const local = localUser.consent;
+    const consent =
+      pulled.consent && (!local || pulled.consent.updatedAt >= local.updatedAt)
+        ? pulled.consent
+        : local;
+    await overwriteLocalUserFromCloud({ ...pulled, consent });
 
     setStep('success');
   }
@@ -482,7 +540,8 @@ export default function SyncOverlay() {
         />
       )}
 
-      {(step === 'in_sync' ||
+      {(step === 'needs_consent' ||
+        step === 'in_sync' ||
         step === 'local_newer' ||
         step === 'cloud_newer' ||
         step === 'success' ||
@@ -491,6 +550,8 @@ export default function SyncOverlay() {
           step={step}
           localUser={localUser}
           cloudUpdatedAt={cloudUpdatedAt}
+          backupConsent={backupConsent}
+          onBackupConsentChange={setBackupConsent}
           onUpload={handleUpload}
           onPull={handlePull}
           onDone={step === 'error' ? compare : close}

@@ -12,7 +12,6 @@ import {
   Modal,
   Alert,
   Linking,
-  Image,
   Dimensions,
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
@@ -30,11 +29,21 @@ import {
   getLocalUser,
   updateLocalUser,
   overwriteLocalUserFromCloud,
+  hasCurrentConsent,
   LocalUser,
   Kin,
-  CloudSession,
-  saveCloudSession,
 } from '../storage/asyncStorage';
+import { saveLoginSession } from '../services/personnel';
+import { profileFromCloudRow } from '../services/cloudProfile';
+import ConsentForm, {
+  ConsentDraft,
+  emptyConsentDraft,
+  draftFromRecord,
+  validateConsentDraft,
+  recordFromDraft,
+} from '../components/ConsentForm';
+import ConsentCheckbox from '../components/ConsentCheckbox';
+import SignInNotice from '../components/SignInNotice';
 
 // ─────────────────────────────────────────────
 // HELPERS
@@ -74,15 +83,44 @@ function isValidPHPhone(p: string): boolean {
 // VALIDATION (Fix 3 + Fix 6)
 // ─────────────────────────────────────────────
 
-function validateStep(step: number, form: any): string | null {
+type StepKey = 'consent' | 'personal' | 'address' | 'medical' | 'kin' | 'privacy';
+
+const STEP_TITLES: Record<StepKey, string> = {
+  consent: 'Consent',
+  personal: 'Personal',
+  address: 'Address',
+  medical: 'Medical',
+  kin: 'Next of Kin',
+  privacy: 'Privacy',
+};
+
+// Onboarding starts with consent — nothing is collected before it. Editing an
+// existing profile skips it (consent is managed in Settings).
+const ONBOARDING_STEPS: StepKey[] = ['consent', 'personal', 'address', 'medical', 'kin', 'privacy'];
+const EDIT_STEPS: StepKey[] = ['personal', 'address', 'medical', 'kin', 'privacy'];
+
+function validateStep(
+  step: StepKey,
+  form: any,
+  ctx: { hasGuardian: boolean; minorMessage: string }
+): string | null {
   switch (step) {
-    case 0:
+    case 'consent':
+      return validateConsentDraft(form.consent);
+    case 'personal': {
       if (!form.n.trim()) return 'Full name is required';
+      const age = getAge(form.dob);
+      if (age !== null && age < 18 && !ctx.hasGuardian) return ctx.minorMessage;
       return null;
-    case 1:
+    }
+    case 'address':
       if (!form.phn.trim()) return 'Phone number is required';
       if (!isValidPHPhone(form.phn))
         return 'Enter a valid PH phone number (e.g. 09171234567)';
+      return null;
+    case 'kin':
+      if (form.kin.length > 0 && !form.contactsConfirmed)
+        return 'Confirm that your emergency contacts agreed to be listed';
       return null;
     default:
       return null;
@@ -270,9 +308,11 @@ function DateField({
           display="default"
           maximumDate={new Date()}
           minimumDate={new Date(1900, 0, 1)}
-          onValueChange={(event, date) => {
+          // v9 only calls onValueChange when a date is picked (dismissal goes to
+          // onDismiss) and its event has no `type`, so don't check for 'set'.
+          onValueChange={(_, date) => {
             setShow(false);
-            if (event.type === 'set' && date) onChange(toIso(date));
+            if (date) onChange(toIso(date));
           }}
           onDismiss={() => setShow(false)}
         />
@@ -524,6 +564,10 @@ function StepPersonal({
           optional
           last
         />
+        <Text className="text-slate-400 text-xs leading-4 pb-3 -mt-1">
+          Religion is sensitive information. Add it only if it matters for your
+          care — for example, beliefs about blood transfusions.
+        </Text>
       </View>
 
       <View className="bg-white rounded-2xl border border-slate-100 px-4 py-3 mb-4">
@@ -605,6 +649,9 @@ function StepMedical({
       <Text className="text-slate-400 text-sm mb-6">
         Tap a chip to remove it. Press + to add.
       </Text>
+      <Text className="text-slate-400 text-xs leading-4 -mt-4 mb-4">
+        Only authorized responders see this, unless you make your profile public.
+      </Text>
 
       <View className="bg-white rounded-2xl border border-slate-100 p-4 mb-4">
         <ChipInput
@@ -655,8 +702,13 @@ function StepKin({
       setKinError('Please fill in name, relationship, and phone before adding');
       return;
     }
+    // SMS alerts only go to PH mobile numbers — catch typos now, not at the scene.
+    if (!isValidPHPhone(p)) {
+      setKinError('Enter a valid PH mobile number (e.g. 09171234567)');
+      return;
+    }
     setKinError(null);
-    onChange('kin', [...data.kin, { n: n.trim(), p: p.trim(), r: r.trim() }]);
+    onChange('kin', [...data.kin, { n: n.trim(), p: normalizePhone(p), r: r.trim() }]);
     setN('');
     setP('');
     setR('');
@@ -686,6 +738,11 @@ function StepKin({
                 <Text className="text-slate-400 text-xs mt-0.5">
                   {k.r} · {k.p}
                 </Text>
+                {!isValidPHPhone(k.p) && (
+                  <Text className="text-amber-500 text-xs mt-0.5">
+                    Invalid number — alerts can't reach this contact. Remove and re-add.
+                  </Text>
+                )}
               </View>
               <TouchableOpacity
                 onPress={() =>
@@ -726,6 +783,18 @@ function StepKin({
           <Text className="text-teal-700 text-sm font-semibold">+ Add Contact</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Contacts are third parties — the user vouches that they agreed. */}
+      {data.kin.length > 0 && (
+        <View className="bg-white rounded-2xl border border-slate-100 px-4 mb-4">
+          <ConsentCheckbox
+            checked={data.contactsConfirmed}
+            onChange={v => onChange('contactsConfirmed', v)}
+            required
+            label="These people agreed to be listed as my emergency contacts and to be contacted in an emergency."
+          />
+        </View>
+      )}
     </View>
   );
 }
@@ -750,7 +819,7 @@ function StepPrivacy({
             <Text className="text-slate-700 text-sm font-semibold">Public Profile</Text>
             <Text className="text-slate-400 text-xs mt-1">
               {data.is_public
-                ? 'Anyone who scans your tag sees your full medical info'
+                ? 'Anyone who scans your tag sees your full profile, including emergency contacts'
                 : 'Civilians only see your name and blood type. Authorized personnel see everything.'}
             </Text>
           </View>
@@ -783,6 +852,14 @@ function StepPrivacy({
             : '🔒  Only your name and blood type will be shown to civilians. Medical responders with authorized access can see your full profile.'}
         </Text>
       </View>
+
+      <Text className="text-slate-400 text-xs leading-4 mb-4">
+        🔐 Your tag is encrypted and write-protected: other NFC apps can’t read
+        or change it.{' '}
+        {data.is_public
+          ? 'Anyone using the LifeTap app can read your full profile.'
+          : 'In LifeTap, only authorized responders can unlock your medical details.'}
+      </Text>
     </View>
   );
 }
@@ -903,26 +980,9 @@ function ExistingAccountScreen({
       return;
     }
 
-    const { data: personnelData } = await supabase
-      .from('personnel')
-      .select('full_name, role, city, badge_no, organization')
-      .eq('phone', formatted)
-      .eq('is_active', true)
-      .single();
-
-    const session: CloudSession = {
-      access_token: data.session.access_token,
-      refresh_token: data.session.refresh_token,
-      phone: formatted,
-      user_id: data.session.user.id,
-      expires_at: (data.session.expires_at ?? 0) * 1000,
-      role: personnelData?.role ?? null,
-      full_name: personnelData?.full_name ?? null,
-      city: personnelData?.city ?? null,
-      badge_no: personnelData?.badge_no ?? null,
-      organization: personnelData?.organization ?? null,
-    };
-    await saveCloudSession(session);
+    // Personnel restoring a civilian profile get their role too; if the check
+    // fails here, AppContext re-verifies on the next foreground.
+    await saveLoginSession(data.session, formatted);
     await refreshSession();
 
     // Restore by owner_id (Supabase user UUID) — guaranteed unique per account.
@@ -935,12 +995,7 @@ function ExistingAccountScreen({
       .maybeSingle();
 
     if (userData) {
-      const restored: LocalUser = {
-        ...userData,
-        lastModified: new Date(userData.updated_at).getTime(),
-        syncedToTag: false,
-        syncedToCloud: true,
-      };
+      const restored = profileFromCloudRow(userData);
       await overwriteLocalUserFromCloud(restored);
       onRestored(restored);
     } else {
@@ -1037,6 +1092,7 @@ function ExistingAccountScreen({
           />
         </View>
         {error && <Text className="text-red-400 text-xs mb-4">{error}</Text>}
+        <SignInNotice />
         <TouchableOpacity
           onPress={handleSendOTP}
           className="bg-teal-600 rounded-2xl py-4 items-center mb-3"
@@ -1056,7 +1112,34 @@ function ExistingAccountScreen({
 // ONBOARDING FLOW
 // ─────────────────────────────────────────────
 
-const STEP_LABELS = ['Personal', 'Address', 'Medical', 'Next of Kin', 'Privacy'];
+function StepConsent({
+  data,
+  onChange,
+}: {
+  data: any;
+  onChange: (k: string, v: any) => void;
+}) {
+  return (
+    <View>
+      <Text className="text-teal-900 text-xl font-bold mb-1">Before we start</Text>
+      <Text className="text-slate-400 text-sm mb-6">
+        Here’s how LifeTap uses your information. Nothing is saved until you agree.
+      </Text>
+      <ConsentForm draft={data.consent} onChange={d => onChange('consent', d)} />
+    </View>
+  );
+}
+
+function renderStep(step: StepKey, data: any, onChange: (k: string, v: any) => void) {
+  switch (step) {
+    case 'consent': return <StepConsent data={data} onChange={onChange} />;
+    case 'personal': return <StepPersonal data={data} onChange={onChange} />;
+    case 'address': return <StepAddress data={data} onChange={onChange} />;
+    case 'medical': return <StepMedical data={data} onChange={onChange} />;
+    case 'kin': return <StepKin data={data} onChange={onChange} />;
+    case 'privacy': return <StepPrivacy data={data} onChange={onChange} />;
+  }
+}
 
 function OnboardingFlow({ onComplete }: { onComplete: () => void }) {
   const insets = useSafeAreaInsets();
@@ -1064,6 +1147,8 @@ function OnboardingFlow({ onComplete }: { onComplete: () => void }) {
   const [saving, setSaving] = useState(false);
   const [stepError, setStepError] = useState<string | null>(null);
   const [form, setForm] = useState({
+    consent: emptyConsentDraft() as ConsentDraft,
+    contactsConfirmed: false,
     n: '',
     dob: '',
     bt: '',
@@ -1085,7 +1170,11 @@ function OnboardingFlow({ onComplete }: { onComplete: () => void }) {
   }
 
   function handleNext() {
-    const err = validateStep(step, form);
+    const err = validateStep(ONBOARDING_STEPS[step], form, {
+      hasGuardian: form.consent.consenter === 'guardian',
+      minorMessage:
+        'This person is under 18, so a parent or guardian must give consent. Go back to the Consent step and choose “A parent or guardian”.',
+    });
     if (err) { setStepError(err); return; }
     setStepError(null);
     setStep(s => s + 1);
@@ -1093,27 +1182,22 @@ function OnboardingFlow({ onComplete }: { onComplete: () => void }) {
 
   async function handleSave() {
     setSaving(true);
+    const { consent, contactsConfirmed, ...profile } = form;
     const user: LocalUser = {
       id: generateId(),
-      ...form,
+      ...profile,
       lastModified: Date.now(),
       syncedToTag: false,
       syncedToCloud: false,
+      consent: recordFromDraft(consent, undefined, profile.kin.length > 0 && contactsConfirmed),
     };
     await saveLocalUser(user);
     setSaving(false);
     onComplete();
   }
 
-  const stepComponents = [
-    <StepPersonal data={form} onChange={handleChange} />,
-    <StepAddress data={form} onChange={handleChange} />,
-    <StepMedical data={form} onChange={handleChange} />,
-    <StepKin data={form} onChange={handleChange} />,
-    <StepPrivacy data={form} onChange={handleChange} />,
-  ];
-
-  const isLast = step === STEP_LABELS.length - 1;
+  const STEP_LABELS = ONBOARDING_STEPS.map(k => STEP_TITLES[k]);
+  const isLast = step === ONBOARDING_STEPS.length - 1;
 
   return (
     <SafeAreaView className="flex-1 bg-teal-50">
@@ -1144,7 +1228,7 @@ function OnboardingFlow({ onComplete }: { onComplete: () => void }) {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View className="mt-6">{stepComponents[step]}</View>
+          <View className="mt-6">{renderStep(ONBOARDING_STEPS[step], form, handleChange)}</View>
         </ScrollView>
 
         {/* Fix 3: inline step error */}
@@ -1427,6 +1511,16 @@ function EmergencySection({
 // PROFILE VIEW
 // ─────────────────────────────────────────────
 
+function formFromUser(user: LocalUser) {
+  return {
+    contactsConfirmed: user.consent?.contactsConfirmed ?? false,
+    n: user.n, dob: user.dob, bt: user.bt, rel: user.rel, od: user.od,
+    brg: user.brg, cty: user.cty, phn: user.phn,
+    a: [...user.a], c: [...user.c], meds: [...user.meds],
+    kin: [...user.kin], is_public: user.is_public,
+  };
+}
+
 function ProfileView({
   user,
   onUpdated,
@@ -1440,21 +1534,7 @@ function ProfileView({
   const [editStep, setEditStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [stepError, setStepError] = useState<string | null>(null);
-  const [form, setForm] = useState({
-    n: user.n,
-    dob: user.dob,
-    bt: user.bt,
-    rel: user.rel,
-    od: user.od,
-    brg: user.brg,
-    cty: user.cty,
-    phn: user.phn,
-    a: [...user.a],
-    c: [...user.c],
-    meds: [...user.meds],
-    kin: [...user.kin],
-    is_public: user.is_public,
-  });
+  const [form, setForm] = useState(() => formFromUser(user));
 
   function handleChange(key: string, value: any) {
     setForm(prev => ({ ...prev, [key]: value }));
@@ -1462,12 +1542,7 @@ function ProfileView({
   }
 
   function handleStartEdit() {
-    setForm({
-      n: user.n, dob: user.dob, bt: user.bt, rel: user.rel, od: user.od,
-      brg: user.brg, cty: user.cty, phn: user.phn,
-      a: [...user.a], c: [...user.c], meds: [...user.meds],
-      kin: [...user.kin], is_public: user.is_public,
-    });
+    setForm(formFromUser(user));
     setEditStep(0);
     setStepError(null);
     setEditing(true);
@@ -1475,13 +1550,7 @@ function ProfileView({
 
   // Fix 8: dirty check before cancel
   function handleCancelEdit() {
-    const original = {
-      n: user.n, dob: user.dob, bt: user.bt, rel: user.rel, od: user.od,
-      brg: user.brg, cty: user.cty, phn: user.phn,
-      a: [...user.a], c: [...user.c], meds: [...user.meds],
-      kin: [...user.kin], is_public: user.is_public,
-    };
-    const isDirty = JSON.stringify(form) !== JSON.stringify(original);
+    const isDirty = JSON.stringify(form) !== JSON.stringify(formFromUser(user));
     if (isDirty) {
       Alert.alert(
         'Discard Changes?',
@@ -1497,7 +1566,11 @@ function ProfileView({
   }
 
   function handleNext() {
-    const err = validateStep(editStep, form);
+    const err = validateStep(EDIT_STEPS[editStep], form, {
+      hasGuardian: !!user.consent?.guardian,
+      minorMessage:
+        'This person is under 18, so a parent or guardian must give consent. Update who gave consent in Settings → Privacy & Consent first.',
+    });
     if (err) { setStepError(err); return; }
     setStepError(null);
     setEditStep(s => s + 1);
@@ -1505,7 +1578,15 @@ function ProfileView({
 
   async function handleSave() {
     setSaving(true);
-    const updated = await updateLocalUser(form);
+    const { contactsConfirmed, ...profile } = form;
+    const updated = await updateLocalUser({
+      ...profile,
+      consent: user.consent && {
+        ...user.consent,
+        contactsConfirmed: profile.kin.length > 0 && contactsConfirmed,
+        updatedAt: Date.now(),
+      },
+    });
     setSaving(false);
     if (updated) {
       onUpdated(updated);
@@ -1513,15 +1594,8 @@ function ProfileView({
     }
   }
 
-  const isLast = editStep === STEP_LABELS.length - 1;
-
-  const stepComponents = [
-    <StepPersonal data={form} onChange={handleChange} />,
-    <StepAddress data={form} onChange={handleChange} />,
-    <StepMedical data={form} onChange={handleChange} />,
-    <StepKin data={form} onChange={handleChange} />,
-    <StepPrivacy data={form} onChange={handleChange} />,
-  ];
+  const STEP_LABELS = EDIT_STEPS.map(k => STEP_TITLES[k]);
+  const isLast = editStep === EDIT_STEPS.length - 1;
 
   // ── EDIT MODE ──
   if (editing) {
@@ -1557,7 +1631,7 @@ function ProfileView({
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
-            <View className="mt-6">{stepComponents[editStep]}</View>
+            <View className="mt-6">{renderStep(EDIT_STEPS[editStep], form, handleChange)}</View>
           </ScrollView>
 
           {stepError && (
@@ -1883,35 +1957,147 @@ function ProfileView({
 }
 
 // ─────────────────────────────────────────────
+// CONSENT GATE — profiles created before the consent flow, or that accepted an
+// older notice version, must (re)consent before using the profile.
+// ─────────────────────────────────────────────
+
+function ConsentGate({
+  user,
+  onAccepted,
+}: {
+  user: LocalUser;
+  onAccepted: (u: LocalUser) => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const [draft, setDraft] = useState<ConsentDraft>(() => draftFromRecord(user.consent));
+  const [contactsConfirmed, setContactsConfirmed] = useState(
+    user.consent?.contactsConfirmed ?? false
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const isUpdate = !!user.consent;
+  const hasKin = user.kin.length > 0;
+
+  async function handleAccept() {
+    const age = getAge(user.dob);
+    const err =
+      validateConsentDraft(draft) ??
+      (age !== null && age < 18 && draft.consenter !== 'guardian'
+        ? 'This profile belongs to someone under 18, so a parent or guardian must give consent.'
+        : null) ??
+      (hasKin && !contactsConfirmed
+        ? 'Confirm that your emergency contacts agreed to be listed'
+        : null);
+    if (err) { setError(err); return; }
+
+    setSaving(true);
+    // Goes through updateLocalUser: the SMS choice is written to the tag, so
+    // the tag (and cloud) are marked out of date and the user is prompted to sync.
+    const updated = await updateLocalUser({
+      consent: recordFromDraft(draft, user.consent, hasKin && contactsConfirmed),
+    });
+    setSaving(false);
+    if (updated) onAccepted(updated);
+  }
+
+  return (
+    <SafeAreaView className="flex-1 bg-teal-50">
+      <ScrollView
+        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 54 + 24 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <Text className="text-teal-900 text-xl font-bold mt-6 mb-1">
+          {isUpdate ? 'We’ve updated our privacy notice' : 'Review how LifeTap uses your data'}
+        </Text>
+        <Text className="text-slate-400 text-sm mb-6 leading-5">
+          {isUpdate
+            ? 'Please review and accept the new version to keep using LifeTap.'
+            : 'LifeTap now asks for your consent under the Data Privacy Act. Until you accept, you can’t write your tag or back up to the cloud.'}
+        </Text>
+
+        <ConsentForm draft={draft} onChange={d => { setDraft(d); setError(null); }} />
+
+        {hasKin && (
+          <View className="bg-white rounded-2xl border border-slate-100 px-4 mb-4">
+            <ConsentCheckbox
+              checked={contactsConfirmed}
+              onChange={v => { setContactsConfirmed(v); setError(null); }}
+              required
+              label="The people listed as my emergency contacts agreed to be listed and to be contacted in an emergency."
+            />
+          </View>
+        )}
+
+        {error && (
+          <View className="bg-red-50 border border-red-200 rounded-xl px-4 py-2 mb-3">
+            <Text className="text-red-500 text-xs">{error}</Text>
+          </View>
+        )}
+
+        <TouchableOpacity
+          onPress={handleAccept}
+          disabled={saving}
+          className="bg-teal-600 rounded-2xl py-4 items-center"
+          activeOpacity={0.85}
+        >
+          {saving ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text className="text-white font-semibold">Accept and continue</Text>
+          )}
+        </TouchableOpacity>
+        <Text className="text-slate-400 text-xs text-center mt-3 leading-4">
+          Don’t agree? You can delete your data in Settings → Privacy & Consent.
+        </Text>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+// ─────────────────────────────────────────────
 // MAIN EXPORT
 // ─────────────────────────────────────────────
 
-type ScreenState = 'loading' | 'gate' | 'onboarding' | 'existing_account' | 'profile';
+type ScreenState =
+  | 'loading'
+  | 'gate'
+  | 'onboarding'
+  | 'existing_account'
+  | 'consent_required'
+  | 'profile';
+
+function screenForUser(user: LocalUser | null): ScreenState {
+  if (!user) return 'gate';
+  return hasCurrentConsent(user) ? 'profile' : 'consent_required';
+}
 
 export default function ProfileScreen() {
   const [screen, setScreen] = useState<ScreenState>('loading');
   const [user, setUser] = useState<LocalUser | null>(null);
 
+  // Re-read on focus so changes made elsewhere (cloud pull, Clear Local Data)
+  // show up — but never interrupt onboarding or a restore in progress. Tabs
+  // stay mounted, so ProfileView keeps any unsaved edit state too.
   useFocusEffect(
     useCallback(() => {
-      async function load() {
-        setScreen('loading');
-        const data = await getLocalUser();
-        if (data) {
-          setUser(data);
-          setScreen('profile');
-        } else {
-          setScreen('gate');
-        }
-      }
-      load();
+      let cancelled = false;
+      getLocalUser().then(data => {
+        if (cancelled) return;
+        setUser(data);
+        setScreen(prev => {
+          if (prev === 'onboarding' || prev === 'existing_account') return prev;
+          return screenForUser(data);
+        });
+      });
+      return () => { cancelled = true; };
     }, [])
   );
 
   async function handleOnboardingComplete() {
     const data = await getLocalUser();
     setUser(data);
-    setScreen('profile');
+    setScreen(screenForUser(data));
   }
 
   if (screen === 'loading') {
@@ -1936,8 +2122,9 @@ export default function ProfileScreen() {
     return (
       <ExistingAccountScreen
         onRestored={restored => {
+          // A cloud profile from an older notice version lands on the consent gate.
           setUser(restored);
-          setScreen('profile');
+          setScreen(screenForUser(restored));
         }}
         onNotFound={() => {
           // Signed in but no cloud profile — go to onboarding
@@ -1954,6 +2141,18 @@ export default function ProfileScreen() {
 
   if (screen === 'onboarding') {
     return <OnboardingFlow onComplete={handleOnboardingComplete} />;
+  }
+
+  if (screen === 'consent_required' && user) {
+    return (
+      <ConsentGate
+        user={user}
+        onAccepted={updated => {
+          setUser(updated);
+          setScreen('profile');
+        }}
+      />
+    );
   }
 
   return (

@@ -5,30 +5,37 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Switch,
   ActivityIndicator,
   TextInput,
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Modal,
+  Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
-import { supabase } from '../lib/supabase';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import ConsentForm, {
+  ConsentDraft,
+  draftFromRecord,
+  validateConsentDraft,
+  recordFromDraft,
+} from '../components/ConsentForm';
+import PrivacyNoticeModal from '../components/PrivacyNoticeModal';
+import SignInNotice from '../components/SignInNotice';
+import { CONTROLLER, PRIVACY_NOTICE_VERSION } from '../legal/privacyNotice';
+import { supabase, signOutSupabase } from '../lib/supabase';
 import { useApp } from '../context/AppContext';
+import { saveLoginSession } from '../services/personnel';
 import {
   getLocalUser,
-  getAppSettings,
-  updateAppSettings,
   getCloudSession,
-  saveCloudSession,
   clearCloudSession,
   clearLocalUser,
+  updateLocalUser,
   LocalUser,
-  AppSettings,
   CloudSession,
 } from '../storage/asyncStorage';
-type LockMethod = 'faceid' | 'pin';
 type LoginStep = 'phone' | 'otp' | 'loading';
 
 
@@ -146,28 +153,13 @@ function LoginSheet({ onSuccess, onCancel }: {
       return;
     }
 
-    // Check if this phone belongs to personnel
-    const { data: personnelData } = await supabase
-      .from('personnel')
-      .select('full_name, role, city, badge_no, organization')
-      .eq('phone', formatted)
-      .eq('is_active', true)
-      .single();
-
-    const session: CloudSession = {
-      access_token: data.session.access_token,
-      refresh_token: data.session.refresh_token,
-      phone: formatted,
-      user_id: data.session.user.id,
-      expires_at: (data.session.expires_at ?? 0) * 1000,
-      role: personnelData?.role ?? null,
-      full_name: personnelData?.full_name ?? null,
-      city: personnelData?.city ?? null,
-      badge_no: personnelData?.badge_no ?? null,
-      organization: personnelData?.organization ?? null,
-    };
-
-    await saveCloudSession(session);
+    const { session, personnelCheckFailed } = await saveLoginSession(data.session, formatted);
+    if (personnelCheckFailed) {
+      Alert.alert(
+        'Signed in',
+        "We couldn't confirm responder access right now. If you're LifeTap personnel, responder features will unlock automatically once the app can reach the server."
+      );
+    }
     onSuccess(session);
   }
 
@@ -262,6 +254,8 @@ function LoginSheet({ onSuccess, onCancel }: {
         <Text className="text-red-400 text-xs mb-4">{error}</Text>
       )}
 
+      <SignInNotice />
+
       <TouchableOpacity
         onPress={handleSendOTP}
         className="bg-teal-600 rounded-2xl py-4 items-center mb-3"
@@ -277,6 +271,85 @@ function LoginSheet({ onSuccess, onCancel }: {
   );
 }
 
+// ─────────────────────────────────────────────
+// CONSENT MODAL — review or change consent choices
+// ─────────────────────────────────────────────
+
+function ConsentModal({
+  user,
+  onClose,
+  onSaved,
+}: {
+  user: LocalUser;
+  onClose: () => void;
+  onSaved: (u: LocalUser) => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const [draft, setDraft] = useState<ConsentDraft>(() => draftFromRecord(user.consent));
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    const dob = user.dob ? new Date(user.dob + 'T00:00:00') : null;
+    const age = dob && !isNaN(dob.getTime())
+      ? Math.floor((Date.now() - dob.getTime()) / (1000 * 60 * 60 * 24 * 365.25))
+      : null;
+    const err =
+      validateConsentDraft(draft) ??
+      (age !== null && age < 18 && draft.consenter !== 'guardian'
+        ? 'This profile belongs to someone under 18, so a parent or guardian must give consent.'
+        : null);
+    if (err) { setError(err); return; }
+
+    setSaving(true);
+    // updateLocalUser: the SMS choice lives on the tag, so a change here marks
+    // the tag (and cloud) out of date and the Home screen prompts a re-write.
+    const updated = await updateLocalUser({
+      consent: recordFromDraft(draft, user.consent, user.consent?.contactsConfirmed ?? false),
+    });
+    setSaving(false);
+    if (updated) onSaved(updated);
+  }
+
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <View className="flex-1 bg-teal-50" style={{ paddingTop: insets.top }}>
+        <View className="flex-row items-center justify-between px-5 py-3">
+          <Text className="text-teal-900 text-lg font-bold">Your consent</Text>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Text className="text-slate-500 text-sm font-semibold">Cancel</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView
+          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 32 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <ConsentForm draft={draft} onChange={d => { setDraft(d); setError(null); }} />
+          <Text className="text-slate-400 text-xs leading-4 mb-4">
+            To withdraw consent completely, close this and use “Withdraw consent &
+            delete my data”.
+          </Text>
+          {error && (
+            <View className="bg-red-50 border border-red-200 rounded-xl px-4 py-2 mb-3">
+              <Text className="text-red-500 text-xs">{error}</Text>
+            </View>
+          )}
+          <TouchableOpacity
+            onPress={handleSave}
+            disabled={saving}
+            className="bg-teal-600 rounded-2xl py-4 items-center"
+            activeOpacity={0.85}
+          >
+            {saving ? <ActivityIndicator color="white" /> : (
+              <Text className="text-white font-semibold">Save</Text>
+            )}
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
 
 
 // ─────────────────────────────────────────────
@@ -286,23 +359,23 @@ function LoginSheet({ onSuccess, onCancel }: {
 export default function AccountScreen() {
   const insets = useSafeAreaInsets();
   const [user, setUser] = useState<LocalUser | null>(null);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
   const [session, setSession] = useState<CloudSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [showLogin, setShowLogin] = useState(false);
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const [consentOpen, setConsentOpen] = useState(false);
   const { refreshSession, deactivateReport } = useApp();
+  const navigation = useNavigation<any>();
 
   useFocusEffect(
     useCallback(() => {
       async function load() {
         setLoading(true);
-        const [userData, settingsData, sessionData] = await Promise.all([
+        const [userData, sessionData] = await Promise.all([
           getLocalUser(),
-          getAppSettings(),
           getCloudSession(),
         ]);
         setUser(userData);
-        setSettings(settingsData);
         setSession(sessionData);
         setLoading(false);
       }
@@ -310,18 +383,85 @@ export default function AccountScreen() {
     }, [])
   );
 
-  async function handleToggleLock(value: boolean) {
-    if (!settings) return;
-    const updated = { ...settings, appLockEnabled: value };
-    setSettings(updated);
-    await updateAppSettings({ appLockEnabled: value });
+  // Deletes the cloud account (if signed in) and the profile on this phone.
+  // Shared by Delete Account and Withdraw Consent. Returns false if the cloud
+  // deletion failed — local data is then left untouched so nothing is lost.
+  async function eraseEverything(): Promise<boolean> {
+    try {
+      if (session) {
+        const res = await supabase.functions.invoke('delete-account', { method: 'POST' });
+        if (res.error) throw res.error;
+        await clearCloudSession();
+        await signOutSupabase();
+      }
+      await clearLocalUser();
+      await deactivateReport();
+      await refreshSession();
+      setSession(null);
+      setUser(null);
+      return true;
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Failed to delete your data. Please try again.');
+      return false;
+    }
   }
 
-  async function handleLockMethod(method: LockMethod) {
-    if (!settings) return;
-    const updated = { ...settings, lockMethod: method };
-    setSettings(updated);
-    await updateAppSettings({ lockMethod: method });
+  function promptEraseTag() {
+    Alert.alert(
+      'Erase your tag too?',
+      'Your LifeTap tag still holds your information. Erase it now by holding it to your phone, or do it later from Settings.',
+      [
+        { text: 'Later', style: 'cancel' },
+        { text: 'Erase Tag', onPress: () => navigation.navigate('WriteNFC', { mode: 'erase' }) },
+      ]
+    );
+  }
+
+  function handleWithdrawConsent() {
+    Alert.alert(
+      'Withdraw consent?',
+      (session
+        ? 'This permanently deletes your LifeTap profile from this phone and your cloud account. '
+        : 'This permanently deletes your LifeTap profile from this phone. ') +
+        'Incident reports already filed by responders are kept by the LGU.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Withdraw & Delete',
+          style: 'destructive',
+          onPress: async () => {
+            if (await eraseEverything()) promptEraseTag();
+          },
+        },
+      ]
+    );
+  }
+
+  async function handleDownloadData() {
+    if (!user) return;
+    // Everything the user gave us, without device-only sync flags.
+    const data = {
+      id: user.id, n: user.n, dob: user.dob, bt: user.bt, rel: user.rel, od: user.od,
+      brg: user.brg, cty: user.cty, phn: user.phn,
+      a: user.a, c: user.c, meds: user.meds, kin: user.kin,
+      is_public: user.is_public, lastModified: user.lastModified, consent: user.consent ?? null,
+    };
+    Alert.alert(
+      'Download a copy of your data',
+      'This opens the share sheet with your full profile, including medical information, as text. Anyone you share it with can read it.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          onPress: () => {
+            Share.share({
+              title: 'My LifeTap data',
+              message: JSON.stringify({ exportedAt: new Date().toISOString(), profile: data }, null, 2),
+            }).catch(() => {});
+          },
+        },
+      ]
+    );
   }
 
   async function handleDeleteAccount() {
@@ -344,21 +484,7 @@ export default function AccountScreen() {
                   style: 'destructive',
                   onPress: async () => {
                     if (!session) return;
-                    try {
-                      const res = await supabase.functions.invoke('delete-account', {
-                        method: 'POST',
-                      });
-                      if (res.error) throw res.error;
-                      await clearCloudSession();
-                      await clearLocalUser();
-                      await supabase.auth.signOut();
-                      await deactivateReport();
-                      await refreshSession();
-                      setSession(null);
-                      setUser(null);
-                    } catch (e: any) {
-                      Alert.alert('Error', e?.message ?? 'Failed to delete account. Please try again.');
-                    }
+                    await eraseEverything();
                   },
                 },
               ]
@@ -380,7 +506,7 @@ export default function AccountScreen() {
           style: 'destructive',
           onPress: async () => {
             await clearCloudSession();
-            await supabase.auth.signOut();
+            await signOutSupabase();
             await deactivateReport(); // prevent active report leaking to next sign-in
             await refreshSession();
             setSession(null);
@@ -591,57 +717,10 @@ export default function AccountScreen() {
           </SettingsCard>
         )}
 
-        {/* Security */}
-        {settings && (
-          <>
-            <SectionLabel title="Security" />
-            <SettingsCard>
-              <SettingsRow
-                label="Enable App Lock"
-                sub="Require authentication on open"
-                right={
-                  <Switch
-                    value={settings.appLockEnabled}
-                    onValueChange={handleToggleLock}
-                    trackColor={{ false: '#e2e8f0', true: '#0f766e' }}
-                    thumbColor="#ffffff"
-                  />
-                }
-              />
-              {settings.appLockEnabled && (
-                <View className="px-4 py-3">
-                  <Text className="text-slate-500 text-xs mb-2">Lock Method</Text>
-                  <View className="flex-row bg-teal-50 rounded-xl p-1" style={{ gap: 4 }}>
-                    {(['faceid', 'pin'] as LockMethod[]).map(method => {
-                      const active = settings.lockMethod === method;
-                      return (
-                        <TouchableOpacity
-                          key={method}
-                          onPress={() => handleLockMethod(method)}
-                          activeOpacity={0.8}
-                          className="flex-1 items-center py-2 rounded-lg"
-                          style={{ backgroundColor: active ? '#0f766e' : 'transparent' }}
-                        >
-                          <Text
-                            className="text-sm font-semibold"
-                            style={{ color: active ? '#ffffff' : '#94a3b8' }}
-                          >
-                            {method === 'faceid' ? 'Face ID' : 'PIN Lock'}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                  <Text className="text-slate-400 text-xs mt-2">
-                    {settings.lockMethod === 'faceid'
-                      ? 'Face ID will be used to unlock the app.'
-                      : 'You will be prompted to set a PIN.'}
-                  </Text>
-                </View>
-              )}
-            </SettingsCard>
-          </>
-        )}
+        {/* App Lock is intentionally not shown until biometric/PIN unlock is
+            implemented — a toggle that doesn't protect anything would mislead
+            users about the security of their medical data. AppSettings still
+            stores appLockEnabled/lockMethod for when it's built. */}
 
         {/* Sync */}
         {user && (
@@ -720,6 +799,75 @@ export default function AccountScreen() {
             </>
           )}
 
+        {/* Privacy & Consent — Data Privacy Act rights in one place */}
+        <SectionLabel title="Privacy & Consent" />
+        <SettingsCard>
+          <TouchableOpacity onPress={() => setNoticeOpen(true)} activeOpacity={0.8}>
+            <SettingsRow
+              label="Privacy notice"
+              sub={`Version ${PRIVACY_NOTICE_VERSION}`}
+              right={<Text className="text-slate-300 text-lg">›</Text>}
+            />
+          </TouchableOpacity>
+
+          {user && (
+            <>
+              <TouchableOpacity
+                onPress={() => setConsentOpen(true)}
+                activeOpacity={0.8}
+                disabled={!user.consent}
+              >
+                <SettingsRow
+                  label="Your consent"
+                  sub={
+                    user.consent
+                      ? `Given ${new Date(user.consent.acceptedAt).toLocaleDateString('en-PH', {
+                          month: 'short', day: 'numeric', year: 'numeric',
+                        })}${user.consent.guardian ? ` by ${user.consent.guardian.name} (${user.consent.guardian.relationship})` : ''}` +
+                        ` · SMS alerts ${user.consent.smsAlerts ? 'on' : 'off'}` +
+                        ` · Cloud backup ${user.consent.cloudBackup ? 'on' : 'off'}`
+                      : 'Not given yet — open the Profile tab to review'
+                  }
+                  right={user.consent ? <Text className="text-teal-700 text-xs font-semibold">Change</Text> : undefined}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleDownloadData} activeOpacity={0.8}>
+                <SettingsRow
+                  label="Download a copy of my data"
+                  right={<Text className="text-slate-300 text-lg">›</Text>}
+                />
+              </TouchableOpacity>
+            </>
+          )}
+
+          <TouchableOpacity
+            onPress={() => navigation.navigate('WriteNFC', { mode: 'erase' })}
+            activeOpacity={0.8}
+          >
+            <SettingsRow
+              label="Erase my LifeTap tag"
+              sub="Removes all information from a tag you hold to your phone"
+              right={<Text className="text-slate-300 text-lg">›</Text>}
+            />
+          </TouchableOpacity>
+
+          {user && (
+            <TouchableOpacity onPress={handleWithdrawConsent} activeOpacity={0.8}>
+              <SettingsRow
+                label="Withdraw consent & delete my data"
+                sub={session ? 'Deletes your profile here and your cloud account' : 'Deletes your profile from this phone'}
+                right={<Text className="text-red-500 text-xs font-semibold">Withdraw</Text>}
+              />
+            </TouchableOpacity>
+          )}
+
+          <SettingsRow
+            label="Data Protection Officer"
+            sub={CONTROLLER.dpoContact}
+            last
+          />
+        </SettingsCard>
+
         {/* About */}
         <SectionLabel title="About" />
         <SettingsCard>
@@ -735,6 +883,18 @@ export default function AccountScreen() {
         </SettingsCard>
 
       </ScrollView>
+
+      <PrivacyNoticeModal visible={noticeOpen} onClose={() => setNoticeOpen(false)} />
+      {consentOpen && user && (
+        <ConsentModal
+          user={user}
+          onClose={() => setConsentOpen(false)}
+          onSaved={updated => {
+            setUser(updated);
+            setConsentOpen(false);
+          }}
+        />
+      )}
     </SafeAreaView>
   );
 }
