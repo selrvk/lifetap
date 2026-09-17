@@ -9,14 +9,16 @@ export function RippleRing({ delay, size, color = '#0d9488' }: {
   const anim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.loop(
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.delay(delay),
         Animated.timing(anim, { toValue: 1, duration: 2000, useNativeDriver: true }),
         Animated.timing(anim, { toValue: 0, duration: 0, useNativeDriver: true }),
       ])
-    ).start();
-  }, []);
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [anim, delay]);
 
   return (
     <Animated.View
@@ -40,15 +42,17 @@ export function BouncingDot({ delay, color = '#0f766e' }: {
   const anim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.loop(
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.delay(delay),
         Animated.timing(anim, { toValue: 1, duration: 400, useNativeDriver: true }),
         Animated.timing(anim, { toValue: 0, duration: 400, useNativeDriver: true }),
         Animated.delay(600),
       ])
-    ).start();
-  }, []);
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [anim, delay]);
 
   return (
     <Animated.View

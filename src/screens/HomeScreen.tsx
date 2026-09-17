@@ -1,22 +1,23 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   Image,
   Animated,
-  Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import LinearGradient from 'react-native-linear-gradient';
 import {
   getLocalUser,
-  getSyncStatus,
+  syncStatusOf,
   getCloudSession,
   SyncStatus,
   CloudSession,
 } from '../storage/asyncStorage';
+import { currentResponderKeyId } from '../crypto/keys';
+import { useScannerAnimation } from '../hooks/useScannerAnimation';
 
 const SYNC_CONFIG: Record<SyncStatus, {
   label: string;
@@ -32,7 +33,8 @@ const SYNC_CONFIG: Record<SyncStatus, {
   },
   TAG_BEHIND: {
     label: 'NFC tag is out of date',
-    sub: 'Your local data is newer than the tag',
+    // Also fires for tags in an older (unencrypted or pre-rotation) format.
+    sub: 'Write your latest info to your tag',
     action: 'WRITE TO LIFETAP',
     actionBg: 'bg-teal-600',
     navigateTo: 'WriteNFC',
@@ -65,121 +67,16 @@ export default function HomeScreen() {
   const [hasUser, setHasUser] = useState<boolean>(false);
   const [session, setSession] = useState<CloudSession | null>(null);
 
-  const ping1 = useRef(new Animated.Value(0)).current;
-  const ping2 = useRef(new Animated.Value(0)).current;
-  const ping3 = useRef(new Animated.Value(0)).current;
-  const breathe = useRef(new Animated.Value(0)).current;
-  const orbitOuter = useRef(new Animated.Value(0)).current;
-  const orbitInner = useRef(new Animated.Value(0)).current;
-  const arc1 = useRef(new Animated.Value(0)).current;
-  const arc2 = useRef(new Animated.Value(0)).current;
-  const arc3 = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const PING_PERIOD = 2400;
-    const ARC_PERIOD = 1800;
-
-    const makePingLoop = (val: Animated.Value) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(val, {
-            toValue: 1,
-            duration: PING_PERIOD,
-            easing: Easing.out(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.timing(val, {
-            toValue: 0,
-            duration: 0,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-
-    const makeBreathe = () =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(breathe, {
-            toValue: 1,
-            duration: 1500,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.timing(breathe, {
-            toValue: 0,
-            duration: 1500,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-        ])
-      );
-
-    const ITERATIONS = 1000;
-    const makeOrbit = (val: Animated.Value, duration: number) =>
-      Animated.timing(val, {
-        toValue: ITERATIONS,
-        duration: duration * ITERATIONS,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      });
-
-    const makeArcLoop = (val: Animated.Value) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(val, {
-            toValue: 1,
-            duration: ARC_PERIOD / 2,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.timing(val, {
-            toValue: 0,
-            duration: ARC_PERIOD / 2,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-        ])
-      );
-
-    const breatheAnim = makeBreathe();
-    const orbitOuterAnim = makeOrbit(orbitOuter, 18000);
-    const orbitInnerAnim = makeOrbit(orbitInner, 26000);
-
-    breatheAnim.start();
-    orbitOuterAnim.start();
-    orbitInnerAnim.start();
-
-    // Stagger starts outside the loop so all three share the same period
-    const p1 = makePingLoop(ping1);
-    const p2 = makePingLoop(ping2);
-    const p3 = makePingLoop(ping3);
-    const a1 = makeArcLoop(arc1);
-    const a2 = makeArcLoop(arc2);
-    const a3 = makeArcLoop(arc3);
-
-    p1.start();
-    const t1 = setTimeout(() => p2.start(), PING_PERIOD / 3);
-    const t2 = setTimeout(() => p3.start(), (PING_PERIOD / 3) * 2);
-
-    a1.start();
-    const t3 = setTimeout(() => a2.start(), ARC_PERIOD / 3);
-    const t4 = setTimeout(() => a3.start(), (ARC_PERIOD / 3) * 2);
-
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-      clearTimeout(t4);
-      [breatheAnim, orbitOuterAnim, orbitInnerAnim, p1, p2, p3, a1, a2, a3].forEach(a => a.stop());
-    };
-  }, [ping1, ping2, ping3, breathe, orbitOuter, orbitInner, arc1, arc2, arc3]);
+  const { pings, arcs, orbitOuter, orbitInner, pingStyle, orbitRotate, breatheStyle } =
+    useScannerAnimation();
 
   useFocusEffect(
     useCallback(() => {
       async function load() {
-        const [user, status, cloudSession] = await Promise.all([
+        // One read each: Keychain round trips are slow enough to notice when
+        // this runs on every return to the tab.
+        const [user, cloudSession] = await Promise.all([
           getLocalUser(),
-          getSyncStatus(),
           getCloudSession(),
         ]);
 
@@ -188,7 +85,7 @@ export default function HomeScreen() {
         if (user) {
           setHasUser(true);
           setUserName(user.n.split(' ')[0]);
-          setSyncStatus(status);
+          setSyncStatus(syncStatusOf(user, cloudSession !== null, currentResponderKeyId()));
         } else {
           setHasUser(false);
           setUserName(null);
@@ -199,43 +96,6 @@ export default function HomeScreen() {
   );
 
   const sync = SYNC_CONFIG[syncStatus];
-
-  const pingStyle = (val: Animated.Value) => ({
-    transform: [
-      {
-        scale: val.interpolate({
-          inputRange: [0, 1],
-          outputRange: [1, 1.7],
-        }),
-      },
-    ],
-    opacity: val.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0.5, 0],
-    }),
-  });
-
-  const orbitRotate = (val: Animated.Value, reverse = false) => ({
-    transform: [
-      {
-        rotate: Animated.modulo(val, 1).interpolate({
-          inputRange: [0, 1],
-          outputRange: reverse ? ['0deg', '-360deg'] : ['0deg', '360deg'],
-        }),
-      },
-    ],
-  });
-
-  const breatheStyle = {
-    transform: [
-      {
-        scale: breathe.interpolate({
-          inputRange: [0, 1],
-          outputRange: [1, 1.04],
-        }),
-      },
-    ],
-  };
 
   return (
     <SafeAreaView className="flex-1 bg-teal-50">
@@ -294,7 +154,7 @@ export default function HomeScreen() {
             }}
           >
           {/* Ping rings */}
-          {[ping1, ping2, ping3].map((p, i) => (
+          {pings.map((p, i) => (
             <Animated.View
               key={`ping-${i}`}
               pointerEvents="none"
@@ -403,7 +263,7 @@ export default function HomeScreen() {
                     height: 40,
                   }}
                 >
-                  {[arc1, arc2, arc3].map((a, i) => {
+                  {arcs.map((a, i) => {
                     const size = 14 + i * 10;
                     return (
                       <Animated.View

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -7,12 +7,12 @@ import {
   Image,
   Alert,
   Animated,
-  Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import LinearGradient from 'react-native-linear-gradient';
 import { useApp } from '../../context/AppContext';
+import { useScannerAnimation } from '../../hooks/useScannerAnimation';
 
 const RADIAL_SIZE = 320;
 const BUTTON_SIZE = 210;
@@ -29,73 +29,8 @@ export default function ResponderScanScreen() {
 
   const recent = activeReport?.entries.slice(-5).reverse() ?? [];
 
-  const ping1 = useRef(new Animated.Value(0)).current;
-  const ping2 = useRef(new Animated.Value(0)).current;
-  const ping3 = useRef(new Animated.Value(0)).current;
-  const breathe = useRef(new Animated.Value(0)).current;
-  const orbitOuter = useRef(new Animated.Value(0)).current;
-  const orbitInner = useRef(new Animated.Value(0)).current;
-  const arc1 = useRef(new Animated.Value(0)).current;
-  const arc2 = useRef(new Animated.Value(0)).current;
-  const arc3 = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const PING_PERIOD = 2400;
-    const ARC_PERIOD = 1800;
-    const ITERATIONS = 1000;
-
-    const makePingLoop = (val: Animated.Value) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(val, { toValue: 1, duration: PING_PERIOD, easing: Easing.out(Easing.ease), useNativeDriver: true }),
-          Animated.timing(val, { toValue: 0, duration: 0, useNativeDriver: true }),
-        ])
-      );
-
-    const breatheAnim = Animated.loop(
-      Animated.sequence([
-        Animated.timing(breathe, { toValue: 1, duration: 1500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(breathe, { toValue: 0, duration: 1500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      ])
-    );
-
-    const makeOrbit = (val: Animated.Value, duration: number) =>
-      Animated.timing(val, { toValue: ITERATIONS, duration: duration * ITERATIONS, easing: Easing.linear, useNativeDriver: true });
-
-    const makeArcLoop = (val: Animated.Value) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(val, { toValue: 1, duration: ARC_PERIOD / 2, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-          Animated.timing(val, { toValue: 0, duration: ARC_PERIOD / 2, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        ])
-      );
-
-    const orbitOuterAnim = makeOrbit(orbitOuter, 18000);
-    const orbitInnerAnim = makeOrbit(orbitInner, 26000);
-
-    breatheAnim.start();
-    orbitOuterAnim.start();
-    orbitInnerAnim.start();
-
-    const p1 = makePingLoop(ping1);
-    const p2 = makePingLoop(ping2);
-    const p3 = makePingLoop(ping3);
-    const a1 = makeArcLoop(arc1);
-    const a2 = makeArcLoop(arc2);
-    const a3 = makeArcLoop(arc3);
-
-    p1.start();
-    const t1 = setTimeout(() => p2.start(), PING_PERIOD / 3);
-    const t2 = setTimeout(() => p3.start(), (PING_PERIOD / 3) * 2);
-    a1.start();
-    const t3 = setTimeout(() => a2.start(), ARC_PERIOD / 3);
-    const t4 = setTimeout(() => a3.start(), (ARC_PERIOD / 3) * 2);
-
-    return () => {
-      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
-      [breatheAnim, orbitOuterAnim, orbitInnerAnim, p1, p2, p3, a1, a2, a3].forEach(a => a.stop());
-    };
-  }, [ping1, ping2, ping3, breathe, orbitOuter, orbitInner, arc1, arc2, arc3]);
+  const { pings, arcs, orbitOuter, orbitInner, pingStyle, orbitRotate, breatheStyle } =
+    useScannerAnimation();
 
   function onStopReport() {
     Alert.alert(
@@ -107,24 +42,6 @@ export default function ResponderScanScreen() {
       ]
     );
   }
-
-  const pingStyle = (val: Animated.Value) => ({
-    transform: [{ scale: val.interpolate({ inputRange: [0, 1], outputRange: [1, 1.7] }) }],
-    opacity: val.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }),
-  });
-
-  const orbitRotate = (val: Animated.Value, reverse = false) => ({
-    transform: [{
-      rotate: Animated.modulo(val, 1).interpolate({
-        inputRange: [0, 1],
-        outputRange: reverse ? ['0deg', '-360deg'] : ['0deg', '360deg'],
-      }),
-    }],
-  });
-
-  const breatheStyle = {
-    transform: [{ scale: breathe.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }) }],
-  };
 
   return (
     <SafeAreaView className="flex-1 bg-red-50">
@@ -193,7 +110,7 @@ export default function ResponderScanScreen() {
         {/* Radial scanner */}
         <View style={{ alignItems: 'center', justifyContent: 'center', height: RADIAL_SIZE }}>
           {/* Ping rings */}
-          {[ping1, ping2, ping3].map((p, i) => (
+          {pings.map((p, i) => (
             <Animated.View
               key={`ping-${i}`}
               pointerEvents="none"
@@ -277,7 +194,7 @@ export default function ResponderScanScreen() {
                   pointerEvents="none"
                   style={{ position: 'absolute', top: 28, right: 28, width: 40, height: 40 }}
                 >
-                  {[arc1, arc2, arc3].map((a, i) => {
+                  {arcs.map((a, i) => {
                     const size = 14 + i * 10;
                     return (
                       <Animated.View

@@ -37,7 +37,7 @@ const NFCSheet = forwardRef<NFCSheetRef, Props>(({ onClose, children }, ref) => 
         useNativeDriver: true,
       }),
     ]).start();
-  }, []);
+  }, [bgAnim, slideAnim]);
 
   function handleClose() {
     Animated.parallel([

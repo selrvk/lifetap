@@ -35,7 +35,7 @@ const NFCStatusPill = forwardRef<NFCStatusPillRef, Props>(({ label, onCancel }, 
       useNativeDriver: true,
     }).start();
 
-    Animated.loop(
+    const pulseLoop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
           toValue: 1,
@@ -50,8 +50,10 @@ const NFCStatusPill = forwardRef<NFCStatusPillRef, Props>(({ label, onCancel }, 
           useNativeDriver: true,
         }),
       ])
-    ).start();
-  }, []);
+    );
+    pulseLoop.start();
+    return () => pulseLoop.stop();
+  }, [pulse, slide]);
 
   const dotScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.6] });
   const dotOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.9, 0.3] });
