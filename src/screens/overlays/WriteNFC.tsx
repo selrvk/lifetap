@@ -5,11 +5,59 @@ import {
   TouchableOpacity,
   ScrollView,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { getLocalUser, markSyncedToTag, LocalUser } from '../../storage/asyncStorage';
-import { writeNfcTag, cancelNfc } from '../../services/nfc';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import {
+  getLocalUser,
+  saveLocalUser,
+  markSyncedToTag,
+  hasCurrentConsent,
+  LocalUser,
+} from '../../storage/asyncStorage';
+import {
+  writeNfcTag,
+  eraseNfcTag,
+  cancelNfc,
+  tagBytesNeeded,
+  NFC_CANCELLED,
+  NTAG216_CAPACITY,
+  TagProfile,
+  TagWriteResult,
+} from '../../services/nfc';
+
+function tagProfileOf(u: LocalUser): TagProfile {
+  return {
+    id: u.id, n: u.n, dob: u.dob, bt: u.bt, brg: u.brg, cty: u.cty, phn: u.phn,
+    rel: u.rel, od: u.od, a: u.a, c: u.c, meds: u.meds, kin: u.kin,
+    is_public: u.is_public,
+    sms: u.consent?.smsAlerts === true,
+    lastModified: u.lastModified,
+  };
+}
+
+// User-facing message for a failed write (null = generic message).
+function failureMessage(r: Exclude<TagWriteResult, { ok: true }>): string | null {
+  switch (r.reason) {
+    case 'too_large':
+      return `Your profile needs ${r.needed} bytes but this tag only holds ${r.capacity}. ` +
+        'Shorten some entries (for example, medications) or use an NTAG216 tag.';
+    case 'locked':
+      return 'This tag is password-locked by another app, so LifeTap can’t write to it.';
+    case 'unsupported':
+      return 'This isn’t a supported tag. LifeTap uses NTAG213, NTAG215 or NTAG216 tags.';
+    case 'not_ndef':
+      return 'This tag isn’t formatted for NFC data. Try a different LifeTap tag.';
+    case 'read_only':
+      return 'This tag is permanently read-only and can’t be written.';
+    case 'not_configured':
+      return 'Tag encryption isn’t set up in this build of the app (missing tag keys).';
+    default:
+      return null;
+  }
+}
 import NFCSheet, { NFCSheetRef } from './../../components/NFCsheet';
 import NFCStatusPill, { NFCStatusPillRef } from './../../components/NFCStatusPill';
+
+type Mode = 'write' | 'erase';
 
 function ConfirmStep({
   user,
@@ -20,13 +68,25 @@ function ConfirmStep({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const needed = tagBytesNeeded(tagProfileOf(user));
+  const tooBig = needed !== null && needed > NTAG216_CAPACITY;
   return (
     <>
       <View className="w-12 h-1 bg-slate-200 rounded-full mb-6 self-center" />
       <Text className="text-teal-900 text-lg font-bold mb-1">Write to LifeTap</Text>
-      <Text className="text-slate-400 text-sm mb-5">
+      <Text className="text-slate-400 text-sm mb-2">
         The following data will be written to your tag
       </Text>
+      {needed !== null && (
+        <Text
+          className="text-xs mb-4"
+          style={{ color: tooBig ? '#dc2626' : '#94a3b8' }}
+        >
+          {tooBig
+            ? `Too large: needs ${needed} of ${NTAG216_CAPACITY} bytes. Shorten some entries first.`
+            : `Uses ${needed} of ${NTAG216_CAPACITY} bytes on an NTAG216 tag`}
+        </Text>
+      )}
 
       <ScrollView
         className="w-full mb-5"
@@ -91,14 +151,26 @@ function ConfirmStep({
           <Text style={{ fontSize: 11, color: user.is_public ? '#0f766e' : '#92400e' }}>
             {user.is_public
               ? '🌐  Full profile visible to anyone who scans this tag'
-              : '🔒  Civilians see name & blood type only'}
+              : '🔒  In LifeTap, civilians see name & blood type only'}
+          </Text>
+          <Text style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>
+            {user.consent?.smsAlerts
+              ? '📱  Responders may text your emergency contacts'
+              : '📵  Responders won’t text your emergency contacts'}
+          </Text>
+          <Text style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>
+            {user.is_public
+              ? '🔐  Encrypted — readable only with the LifeTap app'
+              : '🔐  Encrypted — only responders can read your medical details'}
           </Text>
         </View>
       </ScrollView>
 
       <TouchableOpacity
         onPress={onConfirm}
+        disabled={tooBig}
         className="bg-teal-600 w-full rounded-2xl py-4 items-center mb-3"
+        style={{ opacity: tooBig ? 0.5 : 1 }}
         activeOpacity={0.85}
       >
         <Text className="text-white font-semibold">Write to LifeTap</Text>
@@ -111,15 +183,119 @@ function ConfirmStep({
   );
 }
 
+function ConfirmEraseStep({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <>
+      <View className="w-12 h-1 bg-slate-200 rounded-full mb-6 self-center" />
+      <Text className="text-teal-900 text-lg font-bold mb-1">Erase LifeTap tag</Text>
+      <Text className="text-slate-400 text-sm mb-6 text-center leading-5">
+        This removes all profile and medical information from the tag you hold
+        to your phone. Responders won’t be able to read anything from it until
+        you write it again.
+      </Text>
+      <TouchableOpacity
+        onPress={onConfirm}
+        className="w-full rounded-2xl py-4 items-center mb-3"
+        style={{ backgroundColor: '#dc2626' }}
+        activeOpacity={0.85}
+      >
+        <Text className="text-white font-semibold">Erase Tag</Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={onCancel}>
+        <Text className="text-slate-400 font-semibold text-sm">Cancel</Text>
+      </TouchableOpacity>
+    </>
+  );
+}
+
+// Profiles need current consent before anything is written to a tag.
+function NeedsConsentStep({ onClose }: { onClose: () => void }) {
+  return (
+    <>
+      <View className="w-12 h-1 bg-slate-200 rounded-full mb-6 self-center" />
+      <Text className="text-teal-900 text-lg font-bold mb-1">Review the privacy notice first</Text>
+      <Text className="text-slate-400 text-sm mb-6 text-center leading-5">
+        Open the Profile tab to review and accept how LifeTap uses your data,
+        then come back to write your tag.
+      </Text>
+      <TouchableOpacity
+        onPress={onClose}
+        className="bg-teal-600 w-full rounded-2xl py-4 items-center"
+        activeOpacity={0.85}
+      >
+        <Text className="text-white font-semibold">OK</Text>
+      </TouchableOpacity>
+    </>
+  );
+}
+
+// The tag holds someone else's LifeTap profile or other data — confirm before
+// replacing it (a second tap writes with force).
+function ConfirmOverwriteStep({
+  mode,
+  kind,
+  onConfirm,
+  onCancel,
+}: {
+  mode: Mode;
+  kind: 'lifetap' | 'other';
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <>
+      <View className="w-12 h-1 bg-slate-200 rounded-full mb-6 self-center" />
+      <View className="w-20 h-20 rounded-full items-center justify-center mb-5 bg-amber-50">
+        <Text style={{ fontSize: 36 }}>⚠️</Text>
+      </View>
+      <Text className="text-teal-900 text-lg font-bold mb-1">
+        {kind === 'lifetap' ? 'This is someone else’s LifeTap' : 'This tag already has data'}
+      </Text>
+      <Text className="text-slate-400 text-sm mb-6 text-center leading-5">
+        {kind === 'lifetap'
+          ? 'It holds a different person’s LifeTap profile. '
+          : 'It holds data from another app. '}
+        {mode === 'erase'
+          ? 'Erase it anyway? You’ll need to hold it to your phone again.'
+          : 'Replace it with your profile? You’ll need to hold it to your phone again.'}
+      </Text>
+      <TouchableOpacity
+        onPress={onConfirm}
+        className="w-full rounded-2xl py-4 items-center mb-3"
+        style={{ backgroundColor: '#d97706' }}
+        activeOpacity={0.85}
+      >
+        <Text className="text-white font-semibold">
+          {mode === 'erase' ? 'Erase Anyway' : 'Replace It'}
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={onCancel}>
+        <Text className="text-slate-400 font-semibold text-sm">Cancel</Text>
+      </TouchableOpacity>
+    </>
+  );
+}
+
 function ResultStep({
+  mode,
   success,
+  message,
   onDone,
   onCancel,
 }: {
+  mode: Mode;
   success: boolean;
+  message?: string | null;
   onDone: () => void;
   onCancel: () => void;
 }) {
+  const erase = mode === 'erase';
   return (
     <>
       <View className="w-12 h-1 bg-slate-200 rounded-full mb-8 self-center" />
@@ -132,12 +308,16 @@ function ResultStep({
       </View>
 
       <Text className="text-teal-900 text-lg font-bold mb-1">
-        {success ? 'Tag Updated' : 'Write Failed'}
+        {success
+          ? (erase ? 'Tag Erased' : 'Tag Updated')
+          : (erase ? 'Erase Failed' : 'Write Failed')}
       </Text>
       <Text className="text-slate-400 text-sm mb-8 text-center">
         {success
-          ? 'Your LifeTap tag has been successfully updated with your latest info.'
-          : 'Something went wrong. Make sure the tag is held steady and try again.'}
+          ? (erase
+              ? 'The tag no longer holds any information and is unlocked.'
+              : 'Your LifeTap tag has been updated, encrypted and write-protected.')
+          : message ?? 'Something went wrong. Make sure the tag is held steady and try again.'}
       </Text>
 
       <TouchableOpacity
@@ -160,52 +340,69 @@ function ResultStep({
   );
 }
 
-type Step = 'confirm' | 'scanning' | 'success' | 'error';
+type Step = 'loading' | 'confirm' | 'scanning' | 'overwrite' | 'success' | 'error';
 
 export default function WriteNFC() {
   const navigation = useNavigation();
-  const [step, setStep] = useState<Step>('confirm');
+  const route = useRoute<any>();
+  const mode: Mode = route.params?.mode === 'erase' ? 'erase' : 'write';
+  const [step, setStep] = useState<Step>('loading');
   const [user, setUser] = useState<LocalUser | null>(null);
-  
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [foreignKind, setForeignKind] = useState<'lifetap' | 'other'>('other');
+
   const sheetRef = useRef<NFCSheetRef>(null);
   const pillRef = useRef<NFCStatusPillRef>(null);
+  const mountedRef = useRef(true);
+  const cancelledByPillRef = useRef(false);
 
   useEffect(() => {
     async function load() {
       const data = await getLocalUser();
+      if (!mountedRef.current) return;
       setUser(data);
+      setStep('confirm');
     }
     load();
+    return () => { mountedRef.current = false; };
   }, []);
 
-  async function handleWrite() {
-    if (!user) return;
+  // force = the user confirmed replacing someone else's tag / other data.
+  async function handleWrite(force = false) {
+    if (mode === 'write' && (!user || !hasCurrentConsent(user))) return;
+    cancelledByPillRef.current = false;
+    setErrorMessage(null);
     setStep('scanning');
 
-    const payload = {
-      id: user.id,
-      n: user.n,
-      dob: user.dob,
-      bt: user.bt,
-      brg: user.brg,
-      cty: user.cty,
-      phn: user.phn,
-      rel: user.rel,
-      od: user.od,
-      a: user.a,
-      c: user.c,
-      meds: user.meds,
-      kin: user.kin,
-      is_public: user.is_public,
-      lastModified: user.lastModified,
-    };
+    let result: TagWriteResult;
+    try {
+      result = mode === 'erase'
+        ? await eraseNfcTag({ ownId: user?.id, force })
+        : await writeNfcTag(tagProfileOf(user!), { force });
+    } catch (e) {
+      if (e instanceof Error && e.message === NFC_CANCELLED) {
+        // Our ✕ button already closes the overlay; a cancel from the system
+        // NFC sheet (iOS) goes back to the confirm step instead of "failed".
+        if (!cancelledByPillRef.current && mountedRef.current) setStep('confirm');
+        return;
+      }
+      result = { ok: false, reason: 'failed' };
+    }
+    if (!mountedRef.current) return;
 
-    const success = await writeNfcTag(payload);
-
-    if (success) {
-      await markSyncedToTag();
+    if (result.ok) {
+      if (mode === 'write') {
+        await markSyncedToTag(result.responderKeyId ?? 1);
+      } else if (user) {
+        // The profile still exists on the phone but no longer on a tag.
+        await saveLocalUser({ ...user, syncedToTag: false });
+      }
       setStep('success');
+    } else if (result.reason === 'foreign') {
+      setForeignKind(result.kind);
+      setStep('overwrite');
     } else {
+      setErrorMessage(failureMessage(result));
       setStep('error');
     }
   }
@@ -215,6 +412,7 @@ export default function WriteNFC() {
   }
 
   function pillCancel() {
+    cancelledByPillRef.current = true;
     cancelNfc();
     pillRef.current?.close(() => navigation.goBack());
   }
@@ -228,47 +426,62 @@ export default function WriteNFC() {
     if (step === 'error') {
       handleWrite();
     } else {
-      triggerClose(); 
+      triggerClose();
     }
   }
+
+  if (step === 'loading') return null;
 
   if (step === 'scanning') {
     return (
       <NFCStatusPill
         ref={pillRef}
-        label="Writing to LifeTap…"
+        label={mode === 'erase' ? 'Erasing LifeTap…' : 'Writing to LifeTap…'}
         onCancel={pillCancel}
       />
     );
   }
 
+  let content: React.ReactNode;
+  if (step === 'success' || step === 'error') {
+    content = (
+      <ResultStep
+        mode={mode}
+        success={step === 'success'}
+        message={errorMessage}
+        onDone={handleDone}
+        onCancel={triggerClose}
+      />
+    );
+  } else if (step === 'overwrite') {
+    content = (
+      <ConfirmOverwriteStep
+        mode={mode}
+        kind={foreignKind}
+        onConfirm={() => handleWrite(true)}
+        onCancel={triggerClose}
+      />
+    );
+  } else if (mode === 'erase') {
+    content = <ConfirmEraseStep onConfirm={() => handleWrite()} onCancel={triggerClose} />;
+  } else if (!user) {
+    content = (
+      <>
+        <Text className="text-slate-400 text-sm mb-4">No local profile found.</Text>
+        <TouchableOpacity onPress={triggerClose}>
+          <Text className="text-red-400 font-semibold text-sm">Close</Text>
+        </TouchableOpacity>
+      </>
+    );
+  } else if (!hasCurrentConsent(user)) {
+    content = <NeedsConsentStep onClose={triggerClose} />;
+  } else {
+    content = <ConfirmStep user={user} onConfirm={() => handleWrite()} onCancel={triggerClose} />;
+  }
+
   return (
     <NFCSheet ref={sheetRef} onClose={finalizeClose}>
-      {!user && step === 'confirm' ? (
-        <>
-          <Text className="text-slate-400 text-sm mb-4">No local profile found.</Text>
-          <TouchableOpacity onPress={triggerClose}>
-            <Text className="text-red-400 font-semibold text-sm">Close</Text>
-          </TouchableOpacity>
-        </>
-      ) : (
-        <>
-          {step === 'confirm' && user && (
-            <ConfirmStep
-              user={user}
-              onConfirm={handleWrite}
-              onCancel={triggerClose}
-            />
-          )}
-          {(step === 'success' || step === 'error') && (
-            <ResultStep
-              success={step === 'success'}
-              onDone={handleDone}
-              onCancel={triggerClose}
-            />
-          )}
-        </>
-      )}
+      {content}
     </NFCSheet>
   );
 }

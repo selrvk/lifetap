@@ -1,7 +1,7 @@
 export type RootStackParamList = {
   Main: undefined;
   ReadNFC: undefined;
-  WriteNFC: undefined;
+  WriteNFC: { mode?: 'write' | 'erase' } | undefined;
   SyncOverlay: undefined;
   Success: { message: string; subMessage?: string };
   NFCResult: { data: any; fromReport?: string | null; viewOnly?: boolean };

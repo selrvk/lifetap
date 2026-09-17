@@ -12,10 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useApp } from '../context/AppContext';
 import { sendVictimAlert } from '../services/sms';
-import {
-  getReportById,
-  saveReport as storageSaveReport,
-} from '../storage/asyncStorage';
+import type { TagProfile } from '../services/nfc';
 import type { ReportEntry } from '../types/responder';
 
 type Kin = { n: string; p: string; r: string };
@@ -80,8 +77,8 @@ function SectionItem({ label, last = false }: { label: string; last?: boolean })
 function CallableItem({ name, sub, phone, last = false }: {
   name: string; sub: string; phone: string; last?: boolean;
 }) {
+  const digits = phone.replace(/\D/g, '');
   function dial() {
-    const digits = phone.replace(/\D/g, '');
     if (digits) Linking.openURL(`tel:${digits}`).catch(() => {});
   }
   return (
@@ -93,91 +90,128 @@ function CallableItem({ name, sub, phone, last = false }: {
         <Text className="text-slate-700 text-sm font-semibold">{name}</Text>
         <Text className="text-slate-400 text-xs mt-0.5">{sub}</Text>
       </View>
-      <TouchableOpacity
-        onPress={dial}
-        className="rounded-xl px-4 py-2"
-        style={{ backgroundColor: '#16a34a' }}
-        accessibilityRole="button"
-        accessibilityLabel={`Call ${name}`}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      >
-        <Text style={{ color: 'white', fontWeight: '700', fontSize: 13 }}>Call</Text>
-      </TouchableOpacity>
+      {digits !== '' && (
+        <TouchableOpacity
+          onPress={dial}
+          className="rounded-xl px-4 py-2"
+          style={{ backgroundColor: '#16a34a' }}
+          accessibilityRole="button"
+          accessibilityLabel={`Call ${name}`}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={{ color: 'white', fontWeight: '700', fontSize: 13 }}>Call</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
+}
+
+function getInitials(name: string): string {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
+}
+
+// DOB is optional — return null for empty or unparseable values instead of
+// rendering "Invalid Date" / "NaN".
+function parseDob(dob: string): Date | null {
+  if (!dob) return null;
+  const d = new Date(dob + 'T00:00:00');
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function getAge(dob: string): number | null {
+  const d = parseDob(dob);
+  return d ? Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24 * 365.25)) : null;
 }
 
 export default function NFCResultScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const {
-    data,
     fromReport: fromReportParam,
     viewOnly = false,
   } = route.params ?? {};
-  const { role, activeReport, responderProfile, addVictimToReport } = useApp();
+  // Validated by readNfcTag (parseTagPayload); ReportDetail builds it from a stored entry.
+  const data: TagProfile | undefined = route.params?.data;
+  const {
+    role,
+    activeReport,
+    responderProfile,
+    addVictimToReport,
+    markVictimSmsSent,
+    updateVictimEntry,
+  } = useApp();
 
   const isResponder =
     role === 'medic' || role === 'responder' || role === 'admin';
-  const isAuthorized = isResponder || data?.is_public === true;
+  // Allowed to see the full profile, AND this device could decrypt it. The
+  // badge in the top bar uses isResponder/is_public; everything that shows
+  // medical or contact data uses isAuthorized.
+  const isAuthorized = (isResponder || data?.is_public === true) && !data?.restricted;
 
-  // Freeze the active report we add to, so later context updates don't
+  // Freeze the report we add to on mount, so later context updates don't
   // cause us to re-add to a different report. viewOnly skips the auto-add.
-  const targetReportIdRef = useRef<string | null>(
-    !viewOnly && isResponder && activeReport ? activeReport.id : null
-  );
-  const targetReportNameRef = useRef<string | null>(
-    viewOnly
-      ? (fromReportParam ?? null)
-      : (fromReportParam ?? activeReport?.name ?? null)
+  // Only this (a real add) drives the "Added to / Already in" banners.
+  const targetReportRef = useRef<{ id: string; name: string } | null>(
+    !viewOnly && isResponder && activeReport
+      ? { id: activeReport.id, name: activeReport.name }
+      : null
   );
 
   const [entryId, setEntryId] = useState<string | null>(null);
   const [smsSent, setSmsSent] = useState(false);
   const [sendingSms, setSendingSms] = useState(false);
+  const [alreadyAdded, setAlreadyAdded] = useState(false);
   const addedRef = useRef(false);
 
   // On mount, if responder + active report → add victim to the report.
   useEffect(() => {
-    if (!isResponder || !targetReportIdRef.current || addedRef.current) return;
-    if (!data) return;
+    const target = targetReportRef.current;
+    if (!target || addedRef.current || !data) return;
     addedRef.current = true;
+
+    const existing =
+      activeReport?.id === target.id
+        ? activeReport.entries.find((e) => e.tagId === data.id)
+        : undefined;
+    if (existing) {
+      // Re-scan: reuse the existing entry so an alert that was already sent
+      // shows as sent (and isn't sent twice).
+      setAlreadyAdded(true);
+      setEntryId(existing.id);
+      setSmsSent(existing.smsSent);
+      // An earlier scan without the responder key recorded only name/blood
+      // type — fill in the rest now that this scan could decrypt it.
+      if (existing.restricted && !data.restricted) {
+        updateVictimEntry(target.id, existing.id, {
+          dob: data.dob, a: data.a, c: data.c, meds: data.meds, kin: data.kin,
+          restricted: undefined,
+        }).catch(() => {});
+      }
+      return;
+    }
 
     const newEntry: ReportEntry = {
       id: `${data.id}-${Date.now()}`,
+      tagId: data.id,
       n: data.n,
       bt: data.bt,
       dob: data.dob,
-      a: data.a ?? [],
-      c: data.c ?? [],
-      meds: data.meds ?? [],
-      kin: data.kin ?? [],
+      a: data.a,
+      c: data.c,
+      meds: data.meds,
+      kin: data.kin,
       scannedAt: Date.now(),
       smsSent: false,
+      ...(data.restricted ? { restricted: data.restricted } : {}),
     };
     setEntryId(newEntry.id);
-    addVictimToReport(targetReportIdRef.current, newEntry).catch(() => {
+    addVictimToReport(target.id, newEntry).catch(() => {
       addedRef.current = false;
     });
-  }, [isResponder, data, addVictimToReport]);
-
-  async function markEntrySmsSent() {
-    const rid = targetReportIdRef.current;
-    if (!rid || !entryId) return;
-    const report = await getReportById(rid);
-    if (!report) return;
-    const updated = {
-      ...report,
-      entries: report.entries.map((e) =>
-        e.id === entryId ? { ...e, smsSent: true } : e
-      ),
-      syncedToCloud: false,
-    };
-    await storageSaveReport(updated);
-  }
+  }, [data, addVictimToReport, updateVictimEntry, activeReport]);
 
   async function onSendAlert() {
-    if (!data?.kin || data.kin.length === 0) return;
+    if (!data || data.kin.length === 0) return;
     if (!responderProfile) {
       Alert.alert('Not signed in', 'Sign in as personnel to send alerts.');
       return;
@@ -185,26 +219,24 @@ export default function NFCResultScreen() {
     setSendingSms(true);
     const entry: ReportEntry = {
       id: entryId ?? `${data.id}-${Date.now()}`,
+      tagId: data.id,
       n: data.n,
       bt: data.bt,
       dob: data.dob,
-      a: data.a ?? [],
-      c: data.c ?? [],
-      meds: data.meds ?? [],
+      a: data.a,
+      c: data.c,
+      meds: data.meds,
       kin: data.kin,
       scannedAt: Date.now(),
       smsSent: false,
     };
-    const location = activeReport?.location ?? data.cty ?? 'Unknown location';
-    const res = await sendVictimAlert(
-      entry,
-      location,
-      responderProfile.full_name
-    );
+    const location = activeReport?.location || data.cty || 'Unknown location';
+    const res = await sendVictimAlert(entry, location);
     setSendingSms(false);
     if (res.ok) {
       setSmsSent(true);
-      await markEntrySmsSent();
+      const target = targetReportRef.current;
+      if (target && entryId) await markVictimSmsSent(target.id, entryId);
       Alert.alert('Alert sent', `SMS sent to ${res.sentTo?.length ?? 0} contact(s).`);
     } else {
       Alert.alert(
@@ -216,17 +248,26 @@ export default function NFCResultScreen() {
     }
   }
 
-  function getInitials(name: string): string {
-    return name?.split(' ').slice(0, 2).map((w: string) => w[0]).join('') ?? '?';
+  if (!data) {
+    return (
+      <SafeAreaView className="flex-1 bg-teal-50 items-center justify-center px-6">
+        <Text className="text-slate-600 text-base">No tag data to show.</Text>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          className="bg-white border border-slate-200 rounded-xl px-4 py-2 mt-4"
+        >
+          <Text className="text-slate-600 text-sm font-semibold">← Back</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
   }
 
-  function getAge(dob: string): number {
-    const diff = Date.now() - new Date(dob).getTime();
-    return Math.floor(diff / (1000 * 60 * 60 * 24 * 365.25));
-  }
-
-  const hasKin = Array.isArray(data?.kin) && data.kin.length > 0;
-  const showSmsSheet = !viewOnly && isResponder && hasKin;
+  const age = getAge(data.dob);
+  const dobDate = parseDob(data.dob);
+  const hasKin = data.kin.length > 0;
+  // data.sms is the person's own choice, written to their tag with their consent.
+  const smsAllowed = data.sms;
+  const showSmsSheet = !viewOnly && isResponder && hasKin && smsAllowed;
 
   return (
     <SafeAreaView className="flex-1 bg-teal-50">
@@ -265,12 +306,27 @@ export default function NFCResultScreen() {
           </View>
         </View>
 
-        {/* Added-to-report banner */}
-        {targetReportNameRef.current && (
+        {/* Report banner — only when this scan actually added (or matched) a victim */}
+        {targetReportRef.current && !alreadyAdded && (
           <View className="bg-teal-600 rounded-2xl px-4 py-3 mb-4 flex-row items-center">
             <Text className="text-white text-base mr-2">✓</Text>
             <Text className="text-white text-sm font-semibold flex-1">
-              Added to {targetReportNameRef.current}
+              Added to {targetReportRef.current.name}
+            </Text>
+          </View>
+        )}
+        {targetReportRef.current && alreadyAdded && (
+          <View className="bg-amber-500 rounded-2xl px-4 py-3 mb-4 flex-row items-center">
+            <Text className="text-white text-base mr-2">ℹ</Text>
+            <Text className="text-white text-sm font-semibold flex-1">
+              Already in {targetReportRef.current.name}
+            </Text>
+          </View>
+        )}
+        {viewOnly && fromReportParam && (
+          <View className="bg-white border border-slate-200 rounded-2xl px-4 py-3 mb-4 flex-row items-center">
+            <Text className="text-slate-500 text-sm flex-1">
+              Record from <Text className="font-semibold text-slate-700">{fromReportParam}</Text>
             </Text>
           </View>
         )}
@@ -285,17 +341,20 @@ export default function NFCResultScreen() {
             </View>
             <View className="flex-1">
               <Text className="text-teal-900 text-base font-semibold">{data.n}</Text>
-              <Text className="text-slate-400 text-xs mt-0.5">ID: {data.id}</Text>
+              {isAuthorized && (
+                <Text className="text-slate-400 text-xs mt-0.5">ID: {data.id}</Text>
+              )}
             </View>
-            {data.od && (
+            {isAuthorized && data.od && (
               <View className="bg-teal-50 border border-teal-200 rounded-lg px-2 py-1">
                 <Text className="text-teal-700 text-xs font-semibold">Organ Donor</Text>
               </View>
             )}
           </View>
 
+          {/* Civilians scanning a private tag see name + blood type only — this is
+              what the Privacy step and the write confirmation promise. */}
           <View className="flex-row mt-4" style={{ gap: 8 }}>
-            {/* Blood type gets red — only stat a civilian can act on */}
             <View
               className="flex-1 rounded-xl py-2 items-center"
               style={{ backgroundColor: '#dc2626' }}
@@ -307,50 +366,60 @@ export default function NFCResultScreen() {
                 Blood Type
               </Text>
             </View>
-            <View className="flex-1 bg-teal-50 rounded-xl py-2 items-center">
-              <Text className="text-teal-700 text-sm font-semibold">
-                {getAge(data.dob)}
-              </Text>
-              <Text className="text-slate-400 text-xs mt-0.5">Age</Text>
-            </View>
-            <View className="flex-1 bg-teal-50 rounded-xl py-2 items-center">
-              <Text className="text-teal-700 text-sm font-semibold" numberOfLines={1}>
-                {data.rel}
-              </Text>
-              <Text className="text-slate-400 text-xs mt-0.5">Religion</Text>
-            </View>
+            {isAuthorized && (
+              <>
+                <View className="flex-1 bg-teal-50 rounded-xl py-2 items-center">
+                  <Text className="text-teal-700 text-sm font-semibold">
+                    {age ?? '—'}
+                  </Text>
+                  <Text className="text-slate-400 text-xs mt-0.5">Age</Text>
+                </View>
+                <View className="flex-1 bg-teal-50 rounded-xl py-2 items-center">
+                  <Text className="text-teal-700 text-sm font-semibold" numberOfLines={1}>
+                    {data.rel || '—'}
+                  </Text>
+                  <Text className="text-slate-400 text-xs mt-0.5">Religion</Text>
+                </View>
+              </>
+            )}
           </View>
         </View>
 
-        <SectionCard title="Personal Information">
-          <SectionItem label={`📅  ${new Date(data.dob + 'T00:00:00').toLocaleDateString('en-PH', {
-            year: 'numeric', month: 'long', day: 'numeric' })}`} />
-          <SectionItem label={`📍  ${data.brg}, ${data.cty}`} />
-          <CallableItem
-            name={`📞  ${data.phn}`}
-            sub="Personal phone"
-            phone={data.phn}
-            last
-          />
-        </SectionCard>
-
-        <SectionCard title="Emergency Contacts">
-          {data.kin?.length === 0
-            ? <SectionItem label="No emergency contacts" last />
-            : data.kin?.map((k: Kin, i: number) => (
-                <CallableItem
-                  key={i}
-                  name={k.n}
-                  sub={`${k.r}  ·  ${k.p}`}
-                  phone={k.p}
-                  last={i === data.kin.length - 1}
-                />
-              ))
-          }
-        </SectionCard>
-
         {isAuthorized ? (
           <>
+            <SectionCard title="Personal Information">
+              <SectionItem label={`📅  ${dobDate
+                ? dobDate.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })
+                : '—'}`} />
+              <SectionItem label={`📍  ${[data.brg, data.cty].filter(Boolean).join(', ') || '—'}`} />
+              <CallableItem
+                name={`📞  ${data.phn || '—'}`}
+                sub="Personal phone"
+                phone={data.phn}
+                last
+              />
+            </SectionCard>
+
+            <SectionCard title="Emergency Contacts">
+              {data.kin?.length === 0
+                ? <SectionItem label="No emergency contacts" last />
+                : data.kin?.map((k: Kin, i: number) => (
+                    <CallableItem
+                      key={i}
+                      name={k.n}
+                      sub={`${k.r}  ·  ${k.p}`}
+                      phone={k.p}
+                      last={i === data.kin.length - 1}
+                    />
+                  ))
+              }
+              {isResponder && !viewOnly && hasKin && !smsAllowed && (
+                <Text className="text-slate-400 text-xs pb-2">
+                  📵 This person chose not to allow SMS alerts. Call their contacts instead if needed.
+                </Text>
+              )}
+            </SectionCard>
+
             <SectionCard
               title={data.a?.length > 0 ? '⚠ Allergies' : 'Allergies'}
               tone={data.a?.length > 0 ? 'critical' : 'default'}
@@ -396,16 +465,32 @@ export default function NFCResultScreen() {
               }
             </SectionCard>
           </>
+        ) : isResponder ? (
+          // Responder, but the responder-only section couldn't be opened here.
+          // Say so plainly — never render empty fields as "no known allergies".
+          <View className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-3 flex-row items-center">
+            <Text className="text-2xl mr-3">🔑</Text>
+            <View className="flex-1">
+              <Text className="text-red-800 text-sm font-semibold">
+                Medical details couldn’t be unlocked
+              </Text>
+              <Text className="text-red-600 text-xs mt-0.5 leading-4">
+                {data.restricted === 'invalid'
+                  ? 'The protected part of this tag failed verification — it may be damaged or tampered with. Treat allergies and medications as unknown.'
+                  : 'This phone hasn’t downloaded the responder key yet. Connect to the internet once while signed in, then scan again. Until then, treat allergies and medications as unknown.'}
+              </Text>
+            </View>
+          </View>
         ) : (
           <>
             <View className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-3 flex-row items-center">
               <Text className="text-2xl mr-3">🔒</Text>
               <View className="flex-1">
                 <Text className="text-amber-800 text-sm font-semibold">
-                  Medical Info Restricted
+                  Profile Restricted
                 </Text>
                 <Text className="text-amber-600 text-xs mt-0.5 leading-4">
-                  Allergies, conditions, and medications are only visible to authorized responders.
+                  Medical details, emergency contacts, and personal information are only visible to authorized responders.
                 </Text>
               </View>
             </View>

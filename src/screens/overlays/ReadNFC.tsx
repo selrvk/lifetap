@@ -1,10 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { readNfcTag, cancelNfc } from '../../services/nfc';
+import { readNfcTag, cancelNfc, NFC_CANCELLED, UNRECOGNIZED_TAG } from '../../services/nfc';
 import NFCSheet, { NFCSheetRef } from './../../components/NFCsheet';
 import NFCStatusPill, { NFCStatusPillRef } from './../../components/NFCStatusPill';
-import { useApp } from '../../context/AppContext';
 
 type ScanError = 'unrecognized' | 'failed';
 
@@ -12,36 +11,48 @@ export default function ReadNFC() {
   const navigation = useNavigation<any>();
   const sheetRef = useRef<NFCSheetRef>(null);
   const pillRef = useRef<NFCStatusPillRef>(null);
-  const { activeReport } = useApp();
   const [error, setError] = useState<ScanError | null>(null);
+  const mountedRef = useRef(true);
+  // Set when our own ✕ button cancels — the pill's close animation handles
+  // navigation then, so the cancelled read must not navigate too.
+  const cancelledByPillRef = useRef(false);
 
-  useEffect(() => {
-    startScan();
-    return () => { cancelNfc(); };
-  }, []);
-
-  async function startScan() {
+  const startScan = useCallback(async () => {
     setError(null);
+    cancelledByPillRef.current = false;
     try {
       const data = await readNfcTag();
+      if (!mountedRef.current) return;
       if (data) {
-        navigation.replace('NFCResult', {
-          data,
-          fromReport: activeReport?.name ?? null,
-        });
+        navigation.replace('NFCResult', { data });
       } else {
         setError('failed');
       }
     } catch (e) {
-      if (e instanceof Error && e.message === 'UNRECOGNIZED_TAG') {
+      if (!mountedRef.current) return;
+      const code = e instanceof Error ? e.message : '';
+      if (code === NFC_CANCELLED) {
+        // Cancelled from the system NFC sheet (iOS) — just close.
+        if (!cancelledByPillRef.current) navigation.goBack();
+      } else if (code === UNRECOGNIZED_TAG) {
         setError('unrecognized');
       } else {
         setError('failed');
       }
     }
-  }
+  }, [navigation]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    startScan();
+    return () => {
+      mountedRef.current = false;
+      cancelNfc();
+    };
+  }, [startScan]);
 
   function handlePillCancel() {
+    cancelledByPillRef.current = true;
     cancelNfc();
     pillRef.current?.close(() => navigation.goBack());
   }
