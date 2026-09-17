@@ -115,7 +115,10 @@ serve(async (req) => {
   if (!sid || !token || !from) {
     return json({ error: 'twilio_not_configured' }, 500);
   }
-  const alertsPerHour = Number(env('SMS_ALERTS_PER_HOUR') ?? 60);
+  // A missing or mistyped value falls back to 60 instead of disabling the limit
+  // (Number('abc') is NaN, and count >= NaN is always false).
+  const configuredLimit = Number(env('SMS_ALERTS_PER_HOUR'));
+  const alertsPerHour = Number.isFinite(configuredLimit) && configuredLimit > 0 ? configuredLimit : 60;
 
   // ── Caller must be active personnel ───────────────────────────────────────
   const userClient = createClient(env('SUPABASE_URL')!, env('SUPABASE_ANON_KEY')!, {
