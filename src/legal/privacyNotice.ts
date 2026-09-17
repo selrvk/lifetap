@@ -8,7 +8,8 @@
 // who accepted an older version are asked to review and accept again.
 
 // v2: tags are now encrypted (the v1 notice said they weren't).
-export const PRIVACY_NOTICE_VERSION = '2026-09-v2';
+// v3: consent history is kept, including a record of withdrawals (sections 3 and 6).
+export const PRIVACY_NOTICE_VERSION = '2026-09-v3';
 export const RESPONDER_UNDERTAKING_VERSION = 'resp-2026-09-v1';
 
 // Shows a "Draft" label on the notice until it has been reviewed.
@@ -59,8 +60,8 @@ export const NOTICE_SUMMARY: { title: string; body: string }[] = [
   {
     title: 'Your choices',
     body:
-      'You can view, correct, download or delete your data and withdraw consent at any time in ' +
-      'Settings → Privacy & Consent.',
+      'You can view, correct, download or delete your data, see your consent history, and withdraw ' +
+      'consent at any time in Settings → Privacy & Consent.',
   },
 ];
 
@@ -102,6 +103,10 @@ export const NOTICE_SECTIONS: { heading: string; paragraphs: string[] }[] = [
         'of birth, allergies, conditions, medications and emergency contacts are added to that incident ' +
         'report, which is kept as part of disaster risk reduction and management work ' +
         '(Republic Act No. 10121).',
+      'Consent records — a history of when you gave, renewed, changed or withdrew consent and what ' +
+        'you chose, so we can show that we asked and that we followed your choices (the Act’s ' +
+        'accountability principle, Section 21). It holds no medical information. It is kept on this ' +
+        'phone, and in LifeTap Cloud too if you turn on cloud backup.',
     ],
   },
   {
@@ -135,6 +140,10 @@ export const NOTICE_SECTIONS: { heading: string; paragraphs: string[] }[] = [
       'In the cloud: until you delete your account.',
       `Incident reports: ${CONTROLLER.reportRetention}. Deleting your account does not remove your ` +
         'information from incident reports already filed by responders.',
+      'Consent history: on this phone until you delete your profile. The cloud copy — including the ' +
+        'record that you withdrew consent or deleted your account (its date, the notice version and ' +
+        `an account reference, not your profile) — is ${CONTROLLER.reportRetention}, so we can show ` +
+        'your request was carried out.',
     ],
   },
   {

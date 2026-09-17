@@ -57,6 +57,40 @@ serve(async (req) => {
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
+  // Body (optional): { reason: 'withdraw_consent' | 'delete_account', noticeVersion }
+  let body: any = null;
+  try {
+    body = await req.json();
+  } catch {
+    // Older app versions send no body — treat as a plain account deletion.
+  }
+  const event = body?.reason === 'withdraw_consent' ? 'withdrawn' : 'account_deleted';
+
+  // Record the withdrawal / deletion in the consent history before the profile
+  // goes. The record outlives the account on purpose (see the migration) and
+  // holds no profile data. A logging failure must not block the erasure.
+  const { data: profile } = await adminClient
+    .from('users')
+    .select('id, consent_version')
+    .eq('owner_id', user.id)
+    .maybeSingle();
+  const noticeVersion =
+    (typeof body?.noticeVersion === 'string' && body.noticeVersion.slice(0, 40)) ||
+    profile?.consent_version ||
+    'unknown';
+  const { error: logError } = await adminClient.from('consent_events').insert({
+    id: `srv-${crypto.randomUUID()}`,
+    owner_id: user.id,
+    profile_id: profile?.id ?? null,
+    event,
+    notice_version: noticeVersion,
+    choices: {},
+    occurred_at: new Date().toISOString(),
+  });
+  if (logError) {
+    console.error('[delete-account] consent history insert failed', logError.message);
+  }
+
   // Delete the user's profile row (users table keyed by owner_id)
   const { error: profileError } = await adminClient
     .from('users')

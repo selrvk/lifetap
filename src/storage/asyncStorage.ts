@@ -67,6 +67,34 @@ export function hasCurrentConsent(user: LocalUser | null): boolean {
   return user?.consent?.version === PRIVACY_NOTICE_VERSION;
 }
 
+// One entry in the consent history. The app records the first four kinds;
+// withdrawn / account_deleted are written only in the cloud, by the
+// delete-account function, since the phone's copy is erased at that point.
+export type ConsentEventKind =
+  | 'given'               // first consent (onboarding, or a profile that had none)
+  | 'renewed'             // accepted a newer privacy notice version
+  | 'changed'             // changed a choice (SMS alerts, who consented)
+  | 'cloud_backup_given'  // turned on cloud backup (asked just before the first upload)
+  | 'withdrawn'
+  | 'account_deleted';
+
+export type ConsentChoices = {
+  smsAlerts: boolean;
+  cloudBackup: boolean;
+  contactsConfirmed: boolean;
+  guardian: { name: string; relationship: string } | null;
+};
+
+export type ConsentEvent = {
+  id: string;
+  kind: ConsentEventKind;
+  at: number;                   // Unix ms, phone clock
+  noticeVersion: string;
+  profileId: string | null;
+  choices: ConsentChoices | null;
+  uploaded: boolean;            // copied to LifeTap Cloud (consent_events)
+};
+
 export type PersonnelSession = {
   phone: string;
   full_name: string;
@@ -136,6 +164,7 @@ const KEYS = {
   PERSONNEL_SESSION: 'lifetap:personnel_session',
   APP_SETTINGS:      'lifetap:app_settings',
   CLOUD_SESSION:     'lifetap:cloud_session',
+  CONSENT_LOG:       'lifetap:consent_log',
   // Old single-blob report layout — only read by the one-time migration.
   LEGACY_REPORTS:        '@lifetap_reports',
   LEGACY_ACTIVE_REPORT:  '@lifetap_active_report',
@@ -250,6 +279,56 @@ export async function isLoggedIn(): Promise<boolean> {
 export async function isPersonnel(): Promise<boolean> {
   const session = await getCloudSession();
   return activeRole(session) !== null;
+}
+
+// Runs async read-modify-write jobs one at a time.
+function createQueue() {
+  let queue: Promise<unknown> = Promise.resolve();
+  return function run<T>(fn: () => Promise<T>): Promise<T> {
+    const next = queue.then(fn, fn);
+    queue = next.catch(() => {});
+    return next;
+  };
+}
+
+// ================================================
+// CONSENT HISTORY (append-only on this phone)
+// ================================================
+
+const consentLogQueue = createQueue();
+
+export async function getConsentLog(): Promise<ConsentEvent[]> {
+  try {
+    const raw = await EncryptedStorage.getItem(KEYS.CONSENT_LOG);
+    return raw ? (JSON.parse(raw) as ConsentEvent[]) : [];
+  } catch (e) {
+    console.error('getConsentLog error:', e);
+    return [];
+  }
+}
+
+export function appendConsentEvent(event: ConsentEvent): Promise<void> {
+  return consentLogQueue(async () => {
+    const log = await getConsentLog();
+    if (log.some((e) => e.id === event.id)) return;
+    await EncryptedStorage.setItem(KEYS.CONSENT_LOG, JSON.stringify([...log, event]));
+  });
+}
+
+export function markConsentEventsUploaded(ids: string[]): Promise<void> {
+  const done = new Set(ids);
+  return consentLogQueue(async () => {
+    const log = await getConsentLog();
+    await EncryptedStorage.setItem(
+      KEYS.CONSENT_LOG,
+      JSON.stringify(log.map((e) => (done.has(e.id) ? { ...e, uploaded: true } : e)))
+    );
+  });
+}
+
+// Erased with the profile (Clear Local Data, withdrawal, account deletion).
+export function clearConsentLog(): Promise<void> {
+  return consentLogQueue(() => removeSecureItem(KEYS.CONSENT_LOG, 'clearConsentLog'));
 }
 
 // ================================================
@@ -509,12 +588,7 @@ const ACTIVE_REPORT_ID = 'lifetap:active_report_id';
 // Report writes run one at a time, so two read-modify-write updates of the
 // same report (a scan landing while a background upload finishes) can't
 // overwrite each other.
-let reportQueue: Promise<unknown> = Promise.resolve();
-function serialized<T>(fn: () => Promise<T>): Promise<T> {
-  const run = reportQueue.then(fn, fn);
-  reportQueue = run.catch(() => {});
-  return run;
-}
+const serialized = createQueue();
 
 // One-time move from the old single-blob layout (@lifetap_reports +
 // @lifetap_active_report). Safe to re-run if interrupted: the legacy keys are

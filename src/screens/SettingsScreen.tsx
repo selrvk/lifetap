@@ -27,12 +27,19 @@ import { CONTROLLER, PRIVACY_NOTICE_VERSION } from '../legal/privacyNotice';
 import { supabase, signOutSupabase } from '../lib/supabase';
 import { useApp } from '../context/AppContext';
 import { saveLoginSession } from '../services/personnel';
+import {
+  consentChangeKind,
+  recordConsentEvent,
+  uploadPendingConsentEvents,
+} from '../services/consentLog';
+import ConsentHistoryModal from '../components/ConsentHistoryModal';
 import { PH_MOBILE_E164, toPHE164 } from '../services/phone';
 import {
   getLocalUser,
   getCloudSession,
   clearCloudSession,
   clearLocalUser,
+  clearConsentLog,
   updateLocalUser,
   isTagCurrent,
   LocalUser,
@@ -300,12 +307,19 @@ function ConsentModal({
         : null);
     if (err) { setError(err); return; }
 
+    const next = recordFromDraft(draft, user.consent, user.consent?.contactsConfirmed ?? false);
+    const kind = consentChangeKind(user.consent, next);
+    if (!kind) {
+      // Nothing changed. Saving anyway would mark the tag and cloud out of date.
+      onClose();
+      return;
+    }
+
     setSaving(true);
     // updateLocalUser: the SMS choice lives on the tag, so a change here marks
     // the tag (and cloud) out of date and the Home screen prompts a re-write.
-    const updated = await updateLocalUser({
-      consent: recordFromDraft(draft, user.consent, user.consent?.contactsConfirmed ?? false),
-    });
+    const updated = await updateLocalUser({ consent: next });
+    if (updated) await recordConsentEvent(kind, updated);
     setSaving(false);
     if (updated) onSaved(updated);
   }
@@ -363,6 +377,7 @@ export default function AccountScreen() {
   const [showLogin, setShowLogin] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [consentOpen, setConsentOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const { refreshSession, deactivateReport } = useApp();
   const navigation = useNavigation<any>();
 
@@ -385,15 +400,22 @@ export default function AccountScreen() {
   // Deletes the cloud account (if signed in) and the profile on this phone.
   // Shared by Delete Account and Withdraw Consent. Returns false if the cloud
   // deletion failed — local data is then left untouched so nothing is lost.
-  async function eraseEverything(): Promise<boolean> {
+  async function eraseEverything(reason: 'withdraw_consent' | 'delete_account'): Promise<boolean> {
     try {
       if (session) {
-        const res = await supabase.functions.invoke('delete-account', { method: 'POST' });
+        // Get any consent history not yet copied to the cloud there first; the
+        // function then records the withdrawal / deletion itself.
+        await uploadPendingConsentEvents().catch(() => {});
+        const res = await supabase.functions.invoke('delete-account', {
+          method: 'POST',
+          body: { reason, noticeVersion: user?.consent?.version ?? null },
+        });
         if (res.error) throw res.error;
         await clearCloudSession();
         await signOutSupabase();
       }
       await clearLocalUser();
+      await clearConsentLog();
       await deactivateReport();
       await refreshSession();
       setSession(null);
@@ -433,7 +455,7 @@ export default function AccountScreen() {
           style: 'destructive',
           onPress: async () => {
             const ownId = user?.id;
-            if ((await eraseEverything()) && ownId) promptEraseTag(ownId);
+            if ((await eraseEverything('withdraw_consent')) && ownId) promptEraseTag(ownId);
           },
         },
       ]
@@ -488,7 +510,7 @@ export default function AccountScreen() {
                   onPress: async () => {
                     if (!session) return;
                     const ownId = user?.id;
-                    if ((await eraseEverything()) && ownId) promptEraseTag(ownId);
+                    if ((await eraseEverything('delete_account')) && ownId) promptEraseTag(ownId);
                   },
                 },
               ]
@@ -577,7 +599,10 @@ export default function AccountScreen() {
                   text: 'Delete My Data',
                   style: 'destructive',
                   onPress: async () => {
+                    // Backed-up history goes to the cloud before the phone's copy is erased.
+                    await uploadPendingConsentEvents().catch(() => {});
                     await clearLocalUser();
+                    await clearConsentLog();
                     setUser(null);
                   },
                 },
@@ -837,6 +862,13 @@ export default function AccountScreen() {
                   right={user.consent ? <Text className="text-teal-700 text-xs font-semibold">Change</Text> : undefined}
                 />
               </TouchableOpacity>
+              <TouchableOpacity onPress={() => setHistoryOpen(true)} activeOpacity={0.8}>
+                <SettingsRow
+                  label="Consent history"
+                  sub="When you gave or changed consent, and what you chose"
+                  right={<Text className="text-slate-300 text-lg">›</Text>}
+                />
+              </TouchableOpacity>
               <TouchableOpacity onPress={handleDownloadData} activeOpacity={0.8}>
                 <SettingsRow
                   label="Download a copy of my data"
@@ -891,6 +923,7 @@ export default function AccountScreen() {
       </ScrollView>
 
       <PrivacyNoticeModal visible={noticeOpen} onClose={() => setNoticeOpen(false)} />
+      {historyOpen && <ConsentHistoryModal onClose={() => setHistoryOpen(false)} />}
       {consentOpen && user && (
         <ConsentModal
           user={user}

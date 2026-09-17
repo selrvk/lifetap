@@ -16,6 +16,7 @@ import {
   LocalUser,
 } from '../../storage/asyncStorage';
 import { cloudRowFromProfile, profileFromCloudRow } from '../../services/cloudProfile';
+import { recordConsentEvent, uploadPendingConsentEvents } from '../../services/consentLog';
 
 type SyncStep =
   | 'needs_consent'
@@ -538,6 +539,7 @@ export default function SyncOverlay() {
       const consent = { ...localUser.consent, cloudBackup: true, cloudBackupAt: now, updatedAt: now };
       uploadUser = { ...localUser, consent };
       await saveConsentOnly(consent);
+      await recordConsentEvent('cloud_backup_given', uploadUser);
     }
 
     // If this account already owns a cloud profile with a different id (e.g. user
@@ -570,6 +572,9 @@ export default function SyncOverlay() {
     }
 
     await markSyncedToCloud();
+    // Consent history travels with the backup; events recorded before cloud
+    // backup was turned on go up now.
+    await uploadPendingConsentEvents().catch(() => {});
     setStep('success');
   }
 

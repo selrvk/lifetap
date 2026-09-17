@@ -39,6 +39,7 @@ import { currentResponderKeyId } from '../crypto/keys';
 import { saveLoginSession } from '../services/personnel';
 import { PH_MOBILE_E164, toPHE164 } from '../services/phone';
 import { profileFromCloudRow } from '../services/cloudProfile';
+import { consentChangeKind, recordConsentEvent } from '../services/consentLog';
 import ConsentForm, {
   ConsentDraft,
   emptyConsentDraft,
@@ -1269,6 +1270,7 @@ function OnboardingFlow({ onComplete }: { onComplete: () => void }) {
       consent: recordFromDraft(consent, undefined, profile.kin.length > 0 && contactsConfirmed),
     };
     await saveLocalUser(user);
+    await recordConsentEvent('given', user);
     setSaving(false);
     onComplete();
   }
@@ -1654,6 +1656,11 @@ function ProfileView({
   }
 
   async function handleSave() {
+    // Nothing edited: leave the profile (and its sync status) untouched.
+    if (JSON.stringify(form) === JSON.stringify(formFromUser(user))) {
+      setEditing(false);
+      return;
+    }
     setSaving(true);
     const { contactsConfirmed, ...profile } = form;
     const updated = await updateLocalUser({
@@ -1664,6 +1671,9 @@ function ProfileView({
         updatedAt: Date.now(),
       },
     });
+    // Editing contacts can change the "contacts agreed to be listed" confirmation.
+    const kind = updated?.consent && consentChangeKind(user.consent, updated.consent);
+    if (updated && kind) await recordConsentEvent(kind, updated);
     setSaving(false);
     if (updated) {
       onUpdated(updated);
@@ -2073,6 +2083,8 @@ function ConsentGate({
     const updated = await updateLocalUser({
       consent: recordFromDraft(draft, user.consent, hasKin && contactsConfirmed),
     });
+    const kind = updated?.consent && consentChangeKind(user.consent, updated.consent);
+    if (updated && kind) await recordConsentEvent(kind, updated);
     setSaving(false);
     if (updated) onAccepted(updated);
   }
