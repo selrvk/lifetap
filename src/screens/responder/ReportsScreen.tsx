@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -88,18 +88,20 @@ export default function ReportsScreen() {
   const { getAllReports, deactivateReport, activeReport } = useApp();
   const [reports, setReports] = useState<Report[]>([]);
 
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      (async () => {
-        const all = await getAllReports();
-        if (!cancelled) setReports(all);
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [getAllReports, activeReport])
-  );
+  const loadReports = useCallback(() => {
+    let cancelled = false;
+    getAllReports().then((all) => {
+      if (!cancelled) setReports(all);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [getAllReports]);
+
+  // Reload on focus, and whenever the active report changes while this
+  // screen is open (a STOP here, or a background sync marking it synced).
+  useFocusEffect(loadReports);
+  useEffect(loadReports, [activeReport, loadReports]);
 
   const active = reports.find((r) => r.isActive) ?? null;
   const past = reports
@@ -127,7 +129,7 @@ export default function ReportsScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-teal-50">
+    <SafeAreaView className="flex-1 bg-red-50">
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
@@ -136,7 +138,7 @@ export default function ReportsScreen() {
           <Text className="text-slate-800 text-2xl font-bold">Reports</Text>
           <TouchableOpacity
             onPress={() => navigation.navigate('NewReport')}
-            className="bg-teal-600 rounded-xl px-4 py-2 flex-row items-center"
+            className="bg-red-600 rounded-xl px-4 py-2 flex-row items-center"
           >
             <Text className="text-white text-base mr-1">＋</Text>
             <Text className="text-white text-sm font-bold">New</Text>
@@ -159,7 +161,7 @@ export default function ReportsScreen() {
           </View>
         )}
 
-        <Text className="text-teal-700 text-xs font-semibold uppercase tracking-widest mb-2">
+        <Text className="text-red-700 text-xs font-semibold uppercase tracking-widest mb-2">
           {active ? 'Past Reports' : 'All Reports'}
         </Text>
 

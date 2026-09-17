@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import EncryptedStorage from 'react-native-encrypted-storage';
 import type { Report, ReportEntry } from '../types/responder';
+import { PRIVACY_NOTICE_VERSION } from '../legal/privacyNotice';
+import { TAG_FORMAT_VERSION } from '../crypto/tagFormat';
 
 // ================================================
 // TYPES
@@ -35,7 +37,35 @@ export type LocalUser = {
   lastModified: number; // Unix timestamp (Date.now())
   syncedToTag: boolean;
   syncedToCloud: boolean;
+
+  // Data Privacy Act consent. Missing on profiles created before the consent
+  // flow — see hasCurrentConsent().
+  consent?: ConsentRecord;
+
+  // Format of the payload last written to the tag. Tags from before
+  // encryption have none, so getSyncStatus reports them as out of date.
+  tagFormat?: number;
+  // Responder key the tag's medical section is sealed to (0 = public profile,
+  // no sealed section). After a key rotation, older tags show as out of date.
+  // Missing on v2 tags written before rotation existed — those used key 1.
+  tagKeyId?: number;
 };
+
+export type ConsentRecord = {
+  version: string;            // privacy notice version accepted
+  acceptedAt: number;         // Unix ms the notice was accepted
+  updatedAt: number;          // Unix ms of the last change to any choice below
+  smsAlerts: boolean;         // optional: responders may text emergency contacts
+  cloudBackup: boolean;       // optional: asked just-in-time at first cloud upload
+  cloudBackupAt: number | null;
+  contactsConfirmed: boolean; // user confirmed their emergency contacts agreed to be listed
+  // Set when a parent/guardian gave consent (minor, or person unable to consent)
+  guardian: { name: string; relationship: string } | null;
+};
+
+export function hasCurrentConsent(user: LocalUser | null): boolean {
+  return user?.consent?.version === PRIVACY_NOTICE_VERSION;
+}
 
 export type PersonnelSession = {
   phone: string;
@@ -49,6 +79,8 @@ export type AppSettings = {
   appLockEnabled: boolean;
   lockMethod: 'faceid' | 'pin';
   onboardingComplete: boolean;
+  // Responder confidentiality undertaking, keyed by Supabase user id.
+  responderUndertakings?: Record<string, { version: string; acceptedAt: number }>;
 };
 
 // ================================================
@@ -68,7 +100,32 @@ export type CloudSession = {
   city: string | null;
   badge_no: string | null;
   organization: string | null;
+  // Unix ms of the last time the personnel table confirmed this role online.
+  // null for civilians. See activeRole().
+  personnel_verified_at?: number | null;
 };
+
+export type PersonnelFields = {
+  role: 'medic' | 'responder' | 'admin';
+  full_name: string;
+  city: string | null;
+  badge_no: string | null;
+  organization: string | null;
+};
+
+// How long a responder keeps responder mode without reaching the server.
+// Disaster zones can be offline for days; any successful online check
+// re-confirms (or revokes) the role immediately.
+export const PERSONNEL_OFFLINE_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
+
+// The role the app should act on: the stored personnel role, as long as it
+// was confirmed online within the grace period. Independent of access-token
+// expiry, which only matters for network calls.
+export function activeRole(session: CloudSession | null): CloudSession['role'] {
+  if (!session?.role || !session.personnel_verified_at) return null;
+  const age = Date.now() - session.personnel_verified_at;
+  return age <= PERSONNEL_OFFLINE_GRACE_MS ? session.role : null;
+}
 
 // ================================================
 // KEYS
@@ -79,8 +136,9 @@ const KEYS = {
   PERSONNEL_SESSION: 'lifetap:personnel_session',
   APP_SETTINGS:      'lifetap:app_settings',
   CLOUD_SESSION:     'lifetap:cloud_session',
-  REPORTS:           '@lifetap_reports',
-  ACTIVE_REPORT:     '@lifetap_active_report',
+  // Old single-blob report layout — only read by the one-time migration.
+  LEGACY_REPORTS:        '@lifetap_reports',
+  LEGACY_ACTIVE_REPORT:  '@lifetap_active_report',
 } as const;
 
 // ================================================
@@ -94,10 +152,16 @@ export async function getCloudSession(): Promise<CloudSession | null> {
 
     const session: CloudSession = JSON.parse(raw);
 
-    // Don't delete on expiry — Supabase may still be mid-refresh via onAuthStateChange.
-    // The TOKEN_REFRESHED handler in AppContext will update the stored tokens.
-    // Treat expired as "not logged in" but leave storage intact for the refresh to land.
-    if (Date.now() > session.expires_at) return null;
+    // An expired access token does NOT mean signed out — offline, Supabase can't
+    // refresh it, and treating it as signed out dropped responders into civilian
+    // mode in the field. The session is cleared only on SIGNED_OUT (AppContext).
+
+    // Sessions saved before personnel_verified_at existed: start the grace
+    // period now rather than demoting a responder who updated while offline.
+    if (session.role && session.personnel_verified_at === undefined) {
+      session.personnel_verified_at = Date.now();
+      await EncryptedStorage.setItem(KEYS.CLOUD_SESSION, JSON.stringify(session));
+    }
 
     return session;
   } catch (e) {
@@ -128,6 +192,29 @@ export async function updateCloudSessionTokens(
   }
 }
 
+// Called after an online personnel lookup. Pass null when the phone is not
+// (or no longer) active personnel — this demotes the session to civilian.
+export async function updateCloudSessionPersonnel(
+  personnel: PersonnelFields | null
+): Promise<void> {
+  try {
+    const raw = await EncryptedStorage.getItem(KEYS.CLOUD_SESSION);
+    if (!raw) return;
+    const session: CloudSession = JSON.parse(raw);
+    await EncryptedStorage.setItem(KEYS.CLOUD_SESSION, JSON.stringify({
+      ...session,
+      role: personnel?.role ?? null,
+      full_name: personnel?.full_name ?? null,
+      city: personnel?.city ?? null,
+      badge_no: personnel?.badge_no ?? null,
+      organization: personnel?.organization ?? null,
+      personnel_verified_at: personnel ? Date.now() : null,
+    }));
+  } catch (e) {
+    console.error('updateCloudSessionPersonnel error:', e);
+  }
+}
+
 export async function saveCloudSession(session: CloudSession): Promise<void> {
   try {
     await EncryptedStorage.setItem(KEYS.CLOUD_SESSION, JSON.stringify(session));
@@ -136,12 +223,21 @@ export async function saveCloudSession(session: CloudSession): Promise<void> {
   }
 }
 
-export async function clearCloudSession(): Promise<void> {
+// iOS rejects removing a Keychain item that doesn't exist, and some keys are
+// legitimately cleared twice (sign-out clears the session from the screen and
+// from AppContext's SIGNED_OUT listener). Treat "already gone" as success and
+// only report a failure if the value is actually still there.
+async function removeSecureItem(key: string, label: string): Promise<void> {
   try {
-    await EncryptedStorage.removeItem(KEYS.CLOUD_SESSION);
+    await EncryptedStorage.removeItem(key);
   } catch (e) {
-    console.error('clearCloudSession error:', e);
+    const still = await EncryptedStorage.getItem(key).catch(() => null);
+    if (still) console.error(`${label} error:`, e);
   }
+}
+
+export async function clearCloudSession(): Promise<void> {
+  await removeSecureItem(KEYS.CLOUD_SESSION, 'clearCloudSession');
 }
 
 // Convenience — check if logged in without fetching full session
@@ -153,7 +249,7 @@ export async function isLoggedIn(): Promise<boolean> {
 // Convenience — check if logged in user is personnel
 export async function isPersonnel(): Promise<boolean> {
   const session = await getCloudSession();
-  return session !== null && session.role !== null;
+  return activeRole(session) !== null;
 }
 
 // ================================================
@@ -204,11 +300,16 @@ export async function updateLocalUser(
 }
 
 // Call this after successfully writing to NFC tag
-export async function markSyncedToTag(): Promise<void> {
+export async function markSyncedToTag(tagKeyId: number): Promise<void> {
   try {
     const existing = await getLocalUser();
     if (!existing) return;
-    await saveLocalUser({ ...existing, syncedToTag: true });
+    await saveLocalUser({
+      ...existing,
+      syncedToTag: true,
+      tagFormat: TAG_FORMAT_VERSION,
+      tagKeyId,
+    });
   } catch (e) {
     console.error('markSyncedToTag error:', e);
   }
@@ -222,6 +323,23 @@ export async function markSyncedToCloud(): Promise<void> {
     await saveLocalUser({ ...existing, syncedToCloud: true });
   } catch (e) {
     console.error('markSyncedToCloud error:', e);
+  }
+}
+
+// Records a consent change that does NOT affect what's on the tag (e.g. the
+// just-in-time cloud-backup consent recorded right before an upload), so it
+// doesn't bump lastModified or mark the tag out of date. Choices that ARE on
+// the tag (smsAlerts) must go through updateLocalUser instead.
+export async function saveConsentOnly(consent: ConsentRecord): Promise<LocalUser | null> {
+  try {
+    const existing = await getLocalUser();
+    if (!existing) return null;
+    const updated = { ...existing, consent };
+    await saveLocalUser(updated);
+    return updated;
+  } catch (e) {
+    console.error('saveConsentOnly error:', e);
+    return null;
   }
 }
 
@@ -243,11 +361,7 @@ export async function overwriteLocalUserFromCloud(user: LocalUser): Promise<void
 }
 
 export async function clearLocalUser(): Promise<void> {
-  try {
-    await EncryptedStorage.removeItem(KEYS.USER_PROFILE);
-  } catch (e) {
-    console.error('clearLocalUser error:', e);
-  }
+  await removeSecureItem(KEYS.USER_PROFILE, 'clearLocalUser');
 }
 
 // ================================================
@@ -273,11 +387,7 @@ export async function savePersonnelSession(session: PersonnelSession): Promise<v
 }
 
 export async function clearPersonnelSession(): Promise<void> {
-  try {
-    await EncryptedStorage.removeItem(KEYS.PERSONNEL_SESSION);
-  } catch (e) {
-    console.error('clearPersonnelSession error:', e);
-  }
+  await removeSecureItem(KEYS.PERSONNEL_SESSION, 'clearPersonnelSession');
 }
 
 // ================================================
@@ -314,6 +424,23 @@ export async function updateAppSettings(
   }
 }
 
+export async function getResponderUndertaking(
+  userId: string
+): Promise<{ version: string; acceptedAt: number } | null> {
+  const settings = await getAppSettings();
+  return settings.responderUndertakings?.[userId] ?? null;
+}
+
+export async function saveResponderUndertaking(userId: string, version: string): Promise<void> {
+  const settings = await getAppSettings();
+  await updateAppSettings({
+    responderUndertakings: {
+      ...settings.responderUndertakings,
+      [userId]: { version, acceptedAt: Date.now() },
+    },
+  });
+}
+
 // ================================================
 // SYNC STATUS DERIVED FROM LOCAL DATA
 // Used by HomeScreen to determine which banner to show
@@ -321,47 +448,162 @@ export async function updateAppSettings(
 
 export type SyncStatus = 'IN_SYNC' | 'TAG_BEHIND' | 'CLOUD_BEHIND' | 'NOT_SYNCED';
 
-export async function getSyncStatus(): Promise<SyncStatus> {
-  const user = await getLocalUser();
+// Pure form, for callers that already hold the profile and session — every
+// read here is a Keychain round trip, and HomeScreen needs both anyway.
+// currentTagKeyId: the responder key this build seals new tags to
+// (crypto/keys.currentResponderKeyId), or null if unknown.
+export function syncStatusOf(
+  user: LocalUser | null,
+  loggedIn: boolean,
+  currentTagKeyId: number | null
+): SyncStatus {
   if (!user) return 'NOT_SYNCED';
 
-  const loggedIn = await isLoggedIn();
+  // Out of date if the tag holds plaintext (written before encryption), or
+  // its medical section is sealed to a responder key that has been rotated.
+  const sealedTo = user.tagKeyId ?? 1;
+  const keyCurrent = user.is_public || currentTagKeyId === null || sealedTo === currentTagKeyId;
+  const tagCurrent = user.syncedToTag && user.tagFormat === TAG_FORMAT_VERSION && keyCurrent;
 
-  if (!user.syncedToTag && (!user.syncedToCloud || !loggedIn)) return 'NOT_SYNCED';
-  if (!user.syncedToTag) return 'TAG_BEHIND';
+  if (!tagCurrent && (!user.syncedToCloud || !loggedIn)) return 'NOT_SYNCED';
+  if (!tagCurrent) return 'TAG_BEHIND';
   if (!user.syncedToCloud && loggedIn) return 'CLOUD_BEHIND';
   return 'IN_SYNC';
 }
 
+export async function getSyncStatus(currentTagKeyId: number | null): Promise<SyncStatus> {
+  const [user, loggedIn] = await Promise.all([getLocalUser(), isLoggedIn()]);
+  return syncStatusOf(user, loggedIn, currentTagKeyId);
+}
+
 // ================================================
 // RESPONDER REPORTS
+// Every report on the device belongs to the responder who created it.
+// Callers filter with isReportOwnedBy so a shared LGU phone never shows,
+// activates, or uploads another account's reports.
 // ================================================
+
+export type ReportOwner = { userId: string; phone: string };
+
+export function isReportOwnedBy(report: Report, owner: ReportOwner | null): boolean {
+  if (!owner) return false;
+  return report.ownerId
+    ? report.ownerId === owner.userId
+    : report.responderPhone === owner.phone;
+}
+
+// Storage layout: each report is its own encrypted item, so a scan reads and
+// writes one small report instead of re-encrypting every report on the device
+// (twice, with the old duplicated active copy). An index lists the ids, and the
+// active report is stored as an id only — `isActive` is derived on read.
+const REPORT_PREFIX = 'lifetap:report:';
+const REPORT_INDEX = 'lifetap:reports_index';
+const ACTIVE_REPORT_ID = 'lifetap:active_report_id';
+
+// Report writes run one at a time, so two read-modify-write updates of the
+// same report (a scan landing while a background upload finishes) can't
+// overwrite each other.
+let reportQueue: Promise<unknown> = Promise.resolve();
+function serialized<T>(fn: () => Promise<T>): Promise<T> {
+  const run = reportQueue.then(fn, fn);
+  reportQueue = run.catch(() => {});
+  return run;
+}
+
+// One-time move from the old single-blob layout (@lifetap_reports +
+// @lifetap_active_report). Safe to re-run if interrupted: the legacy keys are
+// only removed after every report has been copied.
+let migration: Promise<void> | null = null;
+function reportsReady(): Promise<void> {
+  if (!migration) {
+    migration = migrateLegacyReports().catch((e) => {
+      migration = null;
+      console.error('report storage migration error:', e);
+    });
+  }
+  return migration;
+}
+
+async function migrateLegacyReports(): Promise<void> {
+  const legacy = await EncryptedStorage.getItem(KEYS.LEGACY_REPORTS);
+  if (legacy == null) return;
+  const list = JSON.parse(legacy) as Report[];
+  const ids = await readIndex();
+  for (const r of list) {
+    await EncryptedStorage.setItem(REPORT_PREFIX + r.id, JSON.stringify(r));
+    if (!ids.includes(r.id)) ids.push(r.id);
+  }
+  await writeIndex(ids);
+  const legacyActive = await EncryptedStorage.getItem(KEYS.LEGACY_ACTIVE_REPORT);
+  const activeId = legacyActive ? (JSON.parse(legacyActive) as Report).id : null;
+  if (activeId) await EncryptedStorage.setItem(ACTIVE_REPORT_ID, activeId);
+  await removeSecureItem(KEYS.LEGACY_ACTIVE_REPORT, 'report migration');
+  await removeSecureItem(KEYS.LEGACY_REPORTS, 'report migration');
+}
+
+async function readIndex(): Promise<string[]> {
+  const raw = await EncryptedStorage.getItem(REPORT_INDEX);
+  return raw ? (JSON.parse(raw) as string[]) : [];
+}
+
+async function writeIndex(ids: string[]): Promise<void> {
+  await EncryptedStorage.setItem(REPORT_INDEX, JSON.stringify(ids));
+}
+
+async function readReport(id: string): Promise<Report | null> {
+  const raw = await EncryptedStorage.getItem(REPORT_PREFIX + id);
+  return raw ? (JSON.parse(raw) as Report) : null;
+}
+
+async function writeReport(report: Report): Promise<void> {
+  // isActive is derived from ACTIVE_REPORT_ID on read, never stored.
+  const stored: Omit<Report, 'isActive'> & { isActive?: boolean } = { ...report };
+  delete stored.isActive;
+  await EncryptedStorage.setItem(REPORT_PREFIX + report.id, JSON.stringify(stored));
+}
+
+async function getActiveReportId(): Promise<string | null> {
+  return (await EncryptedStorage.getItem(ACTIVE_REPORT_ID)) ?? null;
+}
+
+function withActive(report: Report, activeId: string | null): Report {
+  return { ...report, isActive: report.id === activeId };
+}
 
 export async function getAllReports(): Promise<Report[]> {
   try {
-    const raw = await EncryptedStorage.getItem(KEYS.REPORTS);
-    return raw ? (JSON.parse(raw) as Report[]) : [];
+    await reportsReady();
+    const [ids, activeId] = await Promise.all([readIndex(), getActiveReportId()]);
+    const reports = await Promise.all(ids.map(readReport));
+    return reports
+      .filter((r): r is Report => r !== null)
+      .map((r) => withActive(r, activeId));
   } catch (e) {
     console.error('getAllReports error:', e);
     return [];
   }
 }
 
-async function writeAllReports(reports: Report[]): Promise<void> {
-  await EncryptedStorage.setItem(KEYS.REPORTS, JSON.stringify(reports));
+export async function getReportById(id: string): Promise<Report | null> {
+  try {
+    await reportsReady();
+    const [report, activeId] = await Promise.all([readReport(id), getActiveReportId()]);
+    return report ? withActive(report, activeId) : null;
+  } catch (e) {
+    console.error('getReportById error:', e);
+    return null;
+  }
 }
 
-export async function getReportById(id: string): Promise<Report | null> {
-  const all = await getAllReports();
-  return all.find((r) => r.id === id) ?? null;
+async function saveReportUnlocked(report: Report): Promise<void> {
+  await writeReport(report);
+  const ids = await readIndex();
+  if (!ids.includes(report.id)) await writeIndex([...ids, report.id]);
 }
 
 export async function saveReport(report: Report): Promise<void> {
-  const all = await getAllReports();
-  const idx = all.findIndex((r) => r.id === report.id);
-  if (idx >= 0) all[idx] = report;
-  else all.push(report);
-  await writeAllReports(all);
+  await reportsReady();
+  await serialized(() => saveReportUnlocked(report));
 }
 
 export async function updateReport(report: Report): Promise<void> {
@@ -369,16 +611,20 @@ export async function updateReport(report: Report): Promise<void> {
 }
 
 export async function deleteReport(id: string): Promise<void> {
-  const all = await getAllReports();
-  await writeAllReports(all.filter((r) => r.id !== id));
-  const active = await getActiveReport();
-  if (active?.id === id) await setActiveReport(null);
+  await reportsReady();
+  await serialized(async () => {
+    await removeSecureItem(REPORT_PREFIX + id, 'deleteReport');
+    await writeIndex((await readIndex()).filter((x) => x !== id));
+    if ((await getActiveReportId()) === id) await removeSecureItem(ACTIVE_REPORT_ID, 'deleteReport');
+  });
 }
 
 export async function getActiveReport(): Promise<Report | null> {
   try {
-    const raw = await EncryptedStorage.getItem(KEYS.ACTIVE_REPORT);
-    return raw ? (JSON.parse(raw) as Report) : null;
+    await reportsReady();
+    const id = await getActiveReportId();
+    const report = id ? await readReport(id) : null;
+    return report ? withActive(report, id) : null;
   } catch (e) {
     console.error('getActiveReport error:', e);
     return null;
@@ -387,59 +633,66 @@ export async function getActiveReport(): Promise<Report | null> {
 
 export async function setActiveReport(report: Report | null): Promise<void> {
   try {
-    if (report) {
-      const all = await getAllReports();
-      const updated = all.map((r) => ({ ...r, isActive: r.id === report.id }));
-      const exists = updated.some((r) => r.id === report.id);
-      if (!exists) updated.push({ ...report, isActive: true });
-      await writeAllReports(updated);
-      await EncryptedStorage.setItem(
-        KEYS.ACTIVE_REPORT,
-        JSON.stringify({ ...report, isActive: true })
-      );
-    } else {
-      const all = await getAllReports();
-      const updated = all.map((r) => ({ ...r, isActive: false }));
-      await writeAllReports(updated);
-      await EncryptedStorage.removeItem(KEYS.ACTIVE_REPORT);
-    }
+    await reportsReady();
+    await serialized(async () => {
+      if (report) {
+        if (!(await readReport(report.id))) await saveReportUnlocked(report);
+        await EncryptedStorage.setItem(ACTIVE_REPORT_ID, report.id);
+      } else {
+        await removeSecureItem(ACTIVE_REPORT_ID, 'setActiveReport');
+      }
+    });
   } catch (e) {
     console.error('setActiveReport error:', e);
   }
+}
+
+// Read-modify-write of one report under the queue. `change` returns the new
+// report, or null to leave it untouched.
+async function modifyReport(
+  reportId: string,
+  change: (r: Report) => Report | null
+): Promise<Report | null> {
+  await reportsReady();
+  return serialized(async () => {
+    const current = await readReport(reportId);
+    if (!current) return null;
+    const next = change(current);
+    if (next) await writeReport(next);
+    return withActive(next ?? current, await getActiveReportId());
+  });
 }
 
 export async function addEntryToReport(
   reportId: string,
   entry: ReportEntry
 ): Promise<Report | null> {
-  const all = await getAllReports();
-  const idx = all.findIndex((r) => r.id === reportId);
-  if (idx < 0) return null;
-
-  const updated: Report = {
-    ...all[idx],
-    entries: [...all[idx].entries, entry],
-    syncedToCloud: false,
-  };
-  all[idx] = updated;
-  await writeAllReports(all);
-
-  const active = await getActiveReport();
-  if (active?.id === reportId) {
-    await EncryptedStorage.setItem(KEYS.ACTIVE_REPORT, JSON.stringify(updated));
-  }
-  return updated;
+  return modifyReport(reportId, (r) =>
+    r.entries.some((e) => e.tagId === entry.tagId)
+      ? null
+      : { ...r, entries: [...r.entries, entry], syncedToCloud: false, updatedAt: Date.now() }
+  );
 }
 
-export async function markReportSynced(id: string): Promise<void> {
-  const report = await getReportById(id);
-  if (!report) return;
-  await saveReport({ ...report, syncedToCloud: true });
-  const active = await getActiveReport();
-  if (active?.id === id) {
-    await EncryptedStorage.setItem(
-      KEYS.ACTIVE_REPORT,
-      JSON.stringify({ ...report, syncedToCloud: true })
-    );
-  }
+// Patch one victim entry (e.g. smsSent) and mark the report for re-sync.
+export async function updateReportEntry(
+  reportId: string,
+  entryId: string,
+  patch: Partial<Omit<ReportEntry, 'id'>>
+): Promise<Report | null> {
+  return modifyReport(reportId, (r) => ({
+    ...r,
+    entries: r.entries.map((e) => (e.id === entryId ? { ...e, ...patch } : e)),
+    syncedToCloud: false,
+    updatedAt: Date.now(),
+  }));
+}
+
+// uploadedUpdatedAt: the report's updatedAt when the upload started. If the
+// report changed since (a victim was scanned during the upload), it stays
+// unsynced so the change isn't silently left out of the cloud copy.
+export async function markReportSynced(id: string, uploadedUpdatedAt?: number): Promise<void> {
+  await modifyReport(id, (r) =>
+    r.updatedAt === uploadedUpdatedAt ? { ...r, syncedToCloud: true } : null
+  );
 }

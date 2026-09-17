@@ -13,6 +13,7 @@ export type ResponderProfile = {
 
 export type ReportEntry = {
   id: string;
+  tagId: string;
   n: string;
   bt: string;
   dob: string;
@@ -22,10 +23,16 @@ export type ReportEntry = {
   kin: Kin[];
   scannedAt: number;
   smsSent: boolean;
+  // Set when the scan couldn't decrypt the responder-only section: medical and
+  // contact fields are unknown (not empty). Cleared by a later full scan.
+  restricted?: 'no_key' | 'invalid';
 };
 
 export type Report = {
   id: string;
+  // Supabase auth user id of the responder who created it. Missing on reports
+  // created before per-user scoping — those are matched by responderPhone.
+  ownerId?: string;
   name: string;
   date: string;
   location: string;
@@ -35,5 +42,8 @@ export type Report = {
   isActive: boolean;
   entries: ReportEntry[];
   createdAt: number;
+  // Unix ms of the last local change. Used to avoid marking a report synced
+  // when it changed while its upload was in flight.
+  updatedAt?: number;
   syncedToCloud: boolean;
 };

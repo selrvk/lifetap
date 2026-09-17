@@ -98,7 +98,7 @@ export default function NewReportScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-teal-50">
+    <SafeAreaView className="flex-1 bg-red-50">
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -167,7 +167,7 @@ export default function NewReportScreen() {
           <TouchableOpacity
             onPress={onSubmit}
             disabled={submitting}
-            className="bg-teal-600 rounded-2xl py-4 items-center justify-center mt-2"
+            className="bg-red-600 rounded-2xl py-4 items-center justify-center mt-2"
             style={{ opacity: submitting ? 0.6 : 1 }}
           >
             {submitting ? (

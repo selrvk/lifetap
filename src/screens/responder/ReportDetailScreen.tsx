@@ -14,7 +14,6 @@ import {
   useRoute,
 } from '@react-navigation/native';
 import { useApp } from '../../context/AppContext';
-import { getReportById } from '../../storage/asyncStorage';
 import { syncReportToCloud } from '../../services/reports';
 import type { Report, ReportEntry } from '../../types/responder';
 
@@ -41,17 +40,18 @@ export default function ReportDetailScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { reportId } = route.params ?? {};
-  const { setActiveReport, activeReport } = useApp();
+  const { setActiveReport, activeReport, getReportById } = useApp();
 
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
 
+  // Owner-filtered: another account's report shows as "not found".
   const load = useCallback(async () => {
     const r = await getReportById(reportId);
     setReport(r);
     setLoading(false);
-  }, [reportId]);
+  }, [reportId, getReportById]);
 
   useFocusEffect(
     useCallback(() => {
@@ -82,7 +82,9 @@ export default function ReportDetailScreen() {
   function onViewVictim(entry: ReportEntry) {
     navigation.navigate('NFCResult', {
       data: {
-        id: entry.id,
+        // tagId is the victim's LifeTap ID; entries saved before tagId existed
+        // only have the entry id.
+        id: entry.tagId || entry.id,
         n: entry.n,
         bt: entry.bt,
         dob: entry.dob,
@@ -90,13 +92,17 @@ export default function ReportDetailScreen() {
         c: entry.c,
         meds: entry.meds,
         kin: entry.kin,
-        // fields not captured in ReportEntry — provide safe fallbacks
+        // Not captured in ReportEntry — empty values render as "—".
         brg: '',
-        cty: report?.location ?? '',
+        cty: '',
         phn: '',
-        rel: '—',
+        rel: '',
         od: false,
         is_public: true,
+        sms: false,
+        // Scanned without the responder key: medical fields are unknown, and
+        // NFCResult shows that instead of "no known allergies".
+        restricted: entry.restricted,
       },
       fromReport: report?.name ?? null,
       viewOnly: true,
@@ -105,7 +111,7 @@ export default function ReportDetailScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView className="flex-1 bg-teal-50 items-center justify-center">
+      <SafeAreaView className="flex-1 bg-red-50 items-center justify-center">
         <ActivityIndicator color="#0f766e" />
       </SafeAreaView>
     );
@@ -113,7 +119,7 @@ export default function ReportDetailScreen() {
 
   if (!report) {
     return (
-      <SafeAreaView className="flex-1 bg-teal-50 items-center justify-center px-6">
+      <SafeAreaView className="flex-1 bg-red-50 items-center justify-center px-6">
         <Text className="text-slate-600 text-base">Report not found.</Text>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -128,7 +134,7 @@ export default function ReportDetailScreen() {
   const isActive = activeReport?.id === report.id;
 
   return (
-    <SafeAreaView className="flex-1 bg-teal-50">
+    <SafeAreaView className="flex-1 bg-red-50">
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 80 }}
       >
@@ -147,8 +153,8 @@ export default function ReportDetailScreen() {
           )}
           <View className="flex-1" />
           {report.syncedToCloud ? (
-            <View className="bg-teal-50 border border-teal-200 rounded-lg px-2 py-1">
-              <Text className="text-teal-700 text-[10px] font-bold">SYNCED</Text>
+            <View className="bg-red-50 border border-red-200 rounded-lg px-2 py-1">
+              <Text className="text-red-700 text-[10px] font-bold">SYNCED</Text>
             </View>
           ) : (
             <View className="bg-slate-100 border border-slate-200 rounded-lg px-2 py-1">
@@ -179,9 +185,9 @@ export default function ReportDetailScreen() {
           {!isActive && (
             <TouchableOpacity
               onPress={onSetActive}
-              className="flex-1 bg-white border border-teal-200 rounded-2xl py-3 items-center"
+              className="flex-1 bg-white border border-red-200 rounded-2xl py-3 items-center"
             >
-              <Text className="text-teal-700 text-sm font-bold">
+              <Text className="text-red-700 text-sm font-bold">
                 SET AS ACTIVE
               </Text>
             </TouchableOpacity>
@@ -190,7 +196,7 @@ export default function ReportDetailScreen() {
             <TouchableOpacity
               onPress={onSync}
               disabled={syncing}
-              className="flex-1 bg-teal-600 rounded-2xl py-3 items-center justify-center"
+              className="flex-1 bg-red-600 rounded-2xl py-3 items-center justify-center"
               style={{ opacity: syncing ? 0.6 : 1 }}
             >
               {syncing ? (
@@ -205,7 +211,7 @@ export default function ReportDetailScreen() {
         </View>
 
         {/* Victims */}
-        <Text className="text-teal-700 text-xs font-semibold uppercase tracking-widest mb-2">
+        <Text className="text-red-700 text-xs font-semibold uppercase tracking-widest mb-2">
           Victims
         </Text>
 
@@ -228,8 +234,8 @@ export default function ReportDetailScreen() {
                     : undefined
                 }
               >
-                <View className="w-10 h-10 rounded-xl bg-teal-50 items-center justify-center mr-3">
-                  <Text className="text-teal-700 text-xs font-bold">
+                <View className="w-10 h-10 rounded-xl bg-red-50 items-center justify-center mr-3">
+                  <Text className="text-red-700 text-xs font-bold">
                     {e.bt || '?'}
                   </Text>
                 </View>

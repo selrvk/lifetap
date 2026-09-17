@@ -8,13 +8,13 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { supabase } from '../../lib/supabase';
+import { signOutSupabase } from '../../lib/supabase';
 import { clearCloudSession } from '../../storage/asyncStorage';
 import { useApp } from '../../context/AppContext';
 
 function SectionLabel({ title }: { title: string }) {
   return (
-    <Text className="text-teal-700 text-xs font-semibold uppercase tracking-widest mb-2 mt-5">
+    <Text className="text-red-700 text-xs font-semibold uppercase tracking-widest mb-2 mt-5">
       {title}
     </Text>
   );
@@ -68,7 +68,7 @@ export default function ResponderSettingsScreen() {
         onPress: async () => {
           setSigningOut(true);
           try {
-            await supabase.auth.signOut();
+            await signOutSupabase();
             await clearCloudSession();
             await refreshSession();
           } finally {
@@ -96,7 +96,7 @@ export default function ResponderSettingsScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-teal-50">
+    <SafeAreaView className="flex-1 bg-red-50">
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 120 }}
       >
@@ -107,7 +107,7 @@ export default function ResponderSettingsScreen() {
         {/* Profile header */}
         <View className="bg-white rounded-2xl border border-slate-100 p-4 mt-3">
           <View className="flex-row items-center" style={{ gap: 12 }}>
-            <View className="w-12 h-12 rounded-xl bg-teal-700 items-center justify-center">
+            <View className="w-12 h-12 rounded-xl bg-red-700 items-center justify-center">
               <Text className="text-white text-base font-semibold">
                 {(responderProfile?.full_name ?? '?')
                   .split(' ')
@@ -117,7 +117,7 @@ export default function ResponderSettingsScreen() {
               </Text>
             </View>
             <View className="flex-1">
-              <Text className="text-teal-900 text-base font-semibold">
+              <Text className="text-red-900 text-base font-semibold">
                 {responderProfile?.full_name ?? 'Responder'}
               </Text>
               <Text className="text-slate-400 text-xs mt-0.5 uppercase tracking-wider">
