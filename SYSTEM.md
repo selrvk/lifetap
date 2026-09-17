@@ -80,8 +80,11 @@ lifetap/
 │                               belongs in assets/originals/, not in a screen:
 │                               iOS re-decodes images over 2 MB decoded on
 │                               every tab switch, which visibly stalls the UI)
-├── android/                    Android native project
-├── ios/                        iOS native project
+├── android/                    Android native project (launch screen: SplashTheme +
+│                               drawable/splash_background.xml, switched to AppTheme
+│                               in MainActivity.onCreate)
+├── ios/                        iOS native project (launch screen: LaunchScreen.storyboard
+│                               + Images.xcassets/SplashLogo, logo on #F0FDFA)
 ├── supabase/
 │   ├── config.toml             Project ref: uwkjvnutpmnqvfctiwjy
 │   └── functions/
@@ -275,6 +278,11 @@ Generic success modal. Params: `{ message, subMessage? }`.
 - **Record:** `LocalUser.consent: ConsentRecord` — `{ version, acceptedAt, updatedAt, smsAlerts, cloudBackup, cloudBackupAt, contactsConfirmed, guardian }`. `hasCurrentConsent(user)` gates tag writes, sync and the profile view.
 - **Purposes:** core storage on phone + tag (required) · SMS alerts to contacts (optional, carried on the tag as `sms`) · cloud backup (optional, asked at first upload) · public profile (`is_public`, Privacy step).
 - **Cloud:** `users.consent_given_at`, `consent_version` (shown in the dashboard), `consent_details` (jsonb of the choices).
+- **Consent history** (`src/services/consentLog.ts`): an append-only log of `ConsentEvent`s — `given`, `renewed`, `changed`, `cloud_backup_given` (recorded by the app) and `withdrawn`, `account_deleted` (recorded only in the cloud, by `delete-account`). Each holds the kind, time, notice version, profile id and the choices (no profile or medical data).
+  - Recorded after every consent save via `recordConsentEvent(consentChangeKind(previous, next), user)`: onboarding, `ConsentGate`, Settings `ConsentModal`, profile edits that change the contacts confirmation, and the just-in-time cloud-backup consent in Sync. `consentChangeKind` returns null when only the timestamp moved, so unchanged saves add nothing.
+  - Always kept on the phone (`lifetap:consent_log`, own write queue). Copied to `public.consent_events` only for a signed-in profile with **cloud backup on** — right after recording, after each successful profile upload (which also sends events from before backup was turned on), and before Clear Local Data / withdrawal / deletion. Ids are generated on the phone and inserted with `ignoreDuplicates`, so retries never duplicate; failures stay pending.
+  - Settings → Privacy & Consent → **Consent history** (`ConsentHistoryModal`) merges the phone's log with the account's cloud rows (after a restore on a new phone, older events exist only in the cloud) and marks each "Saved in LifeTap Cloud" or "On this phone only".
+  - The phone's copy is erased with the profile (Clear Local Data, withdrawal, deletion). The cloud copy, including the withdrawal/deletion record, outlives the account and is deleted with the pilot data — disclosed in notice sections 3 and 6 (notice v3).
 - **Responder undertaking:** stored per account in `AppSettings.responderUndertakings`, and best-effort on `personnel.undertaking_accepted_at` / `undertaking_version`.
 
 ---
@@ -343,6 +351,7 @@ Two backends:
 | `lifetap:reports_index` | Encrypted | `string[]` of report ids |
 | `lifetap:active_report_id` | Encrypted | active report id (`isActive` is derived on read) |
 | `lifetap:responder_keys` | Encrypted | responder tag-key keyring `{ id: hex }` (personnel only) |
+| `lifetap:consent_log` | Encrypted | `ConsentEvent[]` — consent history, append-only |
 | `@lifetap_reports`, `@lifetap_active_report` | Encrypted | **legacy** single-blob layout — migrated once, then removed |
 
 **Report storage:** one encrypted item per report, so a scan reads/writes a single report instead of re-encrypting every report (the old layout also kept a duplicate active copy that could go stale). All report writes run through one queue (`serialized`), so concurrent updates — a scan landing while a background upload finishes — can't overwrite each other. `markReportSynced(id, uploadedUpdatedAt)` only marks a report synced if its `updatedAt` hasn't changed since the upload started.
@@ -499,8 +508,9 @@ Requires `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` secret
 Deno Edge Function invoked from `SettingsScreen` when a civilian deletes their account.
 
 1. Verifies the caller's JWT using the anon key client
-2. Deletes the user's row from the `users` table (matched by `owner_id`)
-3. Deletes the auth user record via the admin client (service role key)
+2. Records a `withdrawn` (body `reason: 'withdraw_consent'`) or `account_deleted` event in `consent_events`, with the notice version and profile id but no profile data. A failed insert is logged and does not block the deletion
+3. Deletes the user's row from the `users` table (matched by `owner_id`)
+4. Deletes the auth user record via the admin client (service role key)
 
 Requires `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` — all automatically available in Supabase Edge Functions. Deploy with `supabase functions deploy delete-account`.
 
@@ -551,6 +561,8 @@ Env vars come from `react-native-config` (reads `.env` file).
 | `supabase/migrations/20260425000000_create_reports_table.sql` | Creates `reports` table + RLS policy |
 | `supabase/migrations/20260425000001_users_unique_owner.sql` | Adds unique constraint on `users.owner_id` to prevent duplicate profiles per auth account |
 | `supabase/migrations/20260911000000_reports_rls_ownership.sql` | Drops the open "responders can upsert reports" policy, adds `created_by` + backfill + insert trigger, adds own-report select/update policies. Aborts if the dashboard's `policies.sql` isn't applied |
+| `supabase/migrations/20260912100000_lock_down_profile_reads.sql` | Drops the open `users` / `personnel` read policies and the anonymous profile insert; adds city-scoped `users_select_scoped` and owner-only `users_insert_own` |
+| `supabase/migrations/20260917000000_consent_events.sql` | Append-only `consent_events` (consent history): no FK to `auth.users` so withdrawal records outlive the account, server-stamped `recorded_at`, clients may insert only their own `given`/`renewed`/`changed`/`cloud_backup_given` events, owners and admins can read, no update/delete |
 | `supabase/migrations/20260912000000_consent_and_personnel_guard.sql` | Adds `users.consent_*` + `consent_details`, `personnel.undertaking_*`, and a `before update` trigger so non-admin callers can only change `last_login` / `undertaking_*` on their own personnel row (closes `personnel_update_self` letting a responder make themselves admin or reactivate themselves) |
 
 ---
@@ -768,7 +780,7 @@ src/
   legal/
     privacyNotice.ts            Privacy notice + responder undertaking text
 
-__tests__/                      Jest: App render, report storage, tag payload parsing, sync status
+__tests__/                      Jest: App render, report storage, tag payload parsing, sync status, consent history
 jest.setup.js                   Native-module mocks (in-memory Keychain, config, NFC, animations)
 scripts/
   tag-keys.mjs                  Tag key management (status / init / rotate / retire)
@@ -828,7 +840,6 @@ Tag encryption keys in `.env` (managed by `scripts/tag-keys.mjs`; rebuild after 
 
 ### Medium Priority
 - **Privacy notice review** — The notice in `src/legal/privacyNotice.ts` still carries the "Draft" label: have the capstone adviser review it, then set `NOTICE_IS_DRAFT = false`. If an LGU adopts LifeTap it becomes the controller, and the notice needs rewriting around its DPO and retention rules (bump `PRIVACY_NOTICE_VERSION` then). (Re-consent on version change is implemented via `ConsentGate`.)
-- **Consent history** — Only the current consent state is stored (locally and on `users`). An append-only consent log would give a full history of changes and withdrawals.
 - **Tag cloning** — Accepted limitation for the capstone. A tag's bytes can be copied to a blank tag; the copy can't be decrypted any further than the original, but it would show a responder the wrong person's profile. Detecting copies means binding the payload to the chip's read-only serial (already used to derive the NTAG password) as additional authenticated data — a new tag format, every tag rewritten once, and the read path moved from the NDEF session to the raw MIFARE one, since iOS only exposes the serial there. Counterfeit tags with a writable serial defeat even that; real anti-cloning needs NTAG 424 DNA (per-tap AES CMAC).
 - **Report editing** — There is no way to remove a victim from a report or correct an entry after the scan. Entries are append-only.
 - **Offline indicator** — The app has no UI indication of connectivity state. Users in the field may not know a sync is pending.
@@ -849,7 +860,7 @@ Tag encryption keys in `.env` (managed by `scripts/tag-keys.mjs`; rebuild after 
 - [ ] `npm test` passes (Jest + tag crypto)
 - [ ] `package.json` `version` matches the iOS/Android app version (Settings → About shows it)
 - [ ] Enable RLS on `users`, `personnel`, `reports` tables in Supabase dashboard
-- [ ] Run all SQL migrations via `supabase db push` (or apply `policies.sql` → `audit.sql` → `consent.sql` → `users-active.sql` → `20260425000000_create_reports_table.sql` → `20260425000001_users_unique_owner.sql` → `20260911000000_reports_rls_ownership.sql` → `20260912000000_consent_and_personnel_guard.sql` → `20260912100000_lock_down_profile_reads.sql`)
+- [ ] Run all SQL migrations via `supabase db push` (or apply `policies.sql` → `audit.sql` → `consent.sql` → `users-active.sql` → `20260425000000_create_reports_table.sql` → `20260425000001_users_unique_owner.sql` → `20260911000000_reports_rls_ownership.sql` → `20260912000000_consent_and_personnel_guard.sql` → `20260912100000_lock_down_profile_reads.sql` → `20260917000000_consent_events.sql`)
 - [ ] Set Supabase OTP rate limit (recommended: 5 per phone per hour)
 - [ ] Test NFC write/read on target Android devices (behavior varies by OEM)
 - [ ] Test OTP SMS delivery on Philippine carriers (Globe, Smart, DITO)
