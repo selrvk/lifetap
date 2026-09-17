@@ -199,11 +199,12 @@ Overlays use `containedTransparentModal` presentation so the underlying tab scre
 - On cancel (our ✕ or the iOS system sheet): closes quietly, no error sheet
 
 #### `WriteNFC` (`src/screens/overlays/WriteNFC.tsx`)
-Route params: `{ mode?: 'write' | 'erase'; ownId?: string }` (`ownId`: the tag's owner when the profile was already deleted, so the user's own tag isn't flagged as someone else's). State machine: `loading | confirm | scanning | success | error`
+Route params: `{ mode?: 'write' | 'erase'; ownId?: string }` (`ownId`: the tag's owner when the profile was already deleted, so the user's own tag isn't flagged as someone else's). State machine: `loading | confirm | scanning | overwrite | success | error`
 - **ConfirmStep** (write): preview of all data about to be written (identity, medical, kin, privacy, SMS-alert choice)
 - Refuses to write (`NeedsConsentStep`) until the profile has current consent
 - Calls `writeNfcTag()` (payload includes `sms: consent.smsAlerts`), then `markSyncedToTag()` on success
 - **Erase mode**: `ConfirmEraseStep` → `eraseNfcTag()`; works without a local profile (used after withdrawing consent)
+- **Overwrite prompt** (`overwrite`): the tag holds a different LifeTap id or another app's data. Offers **Replace It / Erase Anyway** (retries with `force`), **Use a Different Tag** (back to `confirm`, keeping route params such as `ownId`) and Cancel. With no profile on the phone and no `ownId`, a LifeTap tag is described as "This tag holds a LifeTap profile… make sure the tag is yours" rather than "someone else's" — the app deliberately doesn't remember a deleted profile's id
 - On success: transitions to `ResultStep` (in-screen success, not the shared Success overlay)
 
 #### `SyncOverlay` (`src/screens/overlays/Sync.tsx`)

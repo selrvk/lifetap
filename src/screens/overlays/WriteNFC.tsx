@@ -235,17 +235,25 @@ function NeedsConsentStep({ onClose }: { onClose: () => void }) {
   );
 }
 
-// The tag holds someone else's LifeTap profile or other data — confirm before
+// The tag holds another LifeTap profile or other data — confirm before
 // replacing it (a second tap writes with force).
+// ownerKnown: false when erasing with no profile on the phone (after it was
+// deleted). The app can't tell then whether the tag is the user's own, so it
+// says so instead of calling it "someone else's". Deliberately not solved by
+// remembering the deleted profile's id: withdrawing consent erases it.
 function ConfirmOverwriteStep({
   mode,
   kind,
+  ownerKnown,
   onConfirm,
+  onTryAnother,
   onCancel,
 }: {
   mode: Mode;
   kind: 'lifetap' | 'other';
+  ownerKnown: boolean;
   onConfirm: () => void;
+  onTryAnother: () => void;
   onCancel: () => void;
 }) {
   return (
@@ -254,13 +262,19 @@ function ConfirmOverwriteStep({
       <View className="w-20 h-20 rounded-full items-center justify-center mb-5 bg-amber-50">
         <Text style={{ fontSize: 36 }}>⚠️</Text>
       </View>
-      <Text className="text-teal-900 text-lg font-bold mb-1">
-        {kind === 'lifetap' ? 'This is someone else’s LifeTap' : 'This tag already has data'}
+      <Text className="text-teal-900 text-lg font-bold mb-1 text-center">
+        {kind === 'other'
+          ? 'This tag already has data'
+          : ownerKnown
+            ? 'This is someone else’s LifeTap'
+            : 'This tag holds a LifeTap profile'}
       </Text>
       <Text className="text-slate-400 text-sm mb-6 text-center leading-5">
-        {kind === 'lifetap'
-          ? 'It holds a different person’s LifeTap profile. '
-          : 'It holds data from another app. '}
+        {kind === 'other'
+          ? 'It holds data from another app. '
+          : ownerKnown
+            ? 'It holds a different person’s LifeTap profile. '
+            : 'This phone no longer has a profile to compare it with, so make sure the tag is yours. '}
         {mode === 'erase'
           ? 'Erase it anyway? You’ll need to hold it to your phone again.'
           : 'Replace it with your profile? You’ll need to hold it to your phone again.'}
@@ -274,6 +288,15 @@ function ConfirmOverwriteStep({
         <Text className="text-white font-semibold">
           {mode === 'erase' ? 'Erase Anyway' : 'Replace It'}
         </Text>
+      </TouchableOpacity>
+      {/* Back to the start, keeping this screen's context (e.g. the owner id
+          passed in after a deletion) — closing would lose it. */}
+      <TouchableOpacity
+        onPress={onTryAnother}
+        className="w-full rounded-2xl py-4 items-center mb-3 border border-slate-200"
+        activeOpacity={0.85}
+      >
+        <Text className="text-slate-600 font-semibold">Use a Different Tag</Text>
       </TouchableOpacity>
       <TouchableOpacity onPress={onCancel}>
         <Text className="text-slate-400 font-semibold text-sm">Cancel</Text>
@@ -459,7 +482,9 @@ export default function WriteNFC() {
       <ConfirmOverwriteStep
         mode={mode}
         kind={foreignKind}
+        ownerKnown={mode === 'write' || !!(user?.id ?? ownIdParam)}
         onConfirm={() => handleWrite(true)}
+        onTryAnother={() => setStep('confirm')}
         onCancel={triggerClose}
       />
     );
