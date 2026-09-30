@@ -31,7 +31,7 @@ import { lookupPersonnel } from '../services/personnel';
 import {
   clearResponderKeys,
   ensureResponderKeys,
-  refreshResponderKeys,
+  refreshResponderKeysIfStale,
 } from '../crypto/keys';
 import type {
   Report,
@@ -192,8 +192,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await updateCloudSessionPersonnel(
         result.status === 'found' ? result.personnel : null
       );
-      // Re-download while online so a key rotation reaches every responder.
-      if (result.status === 'found') await refreshResponderKeys();
+      // Re-download (at most daily) so a key rotation reaches every responder.
+      if (result.status === 'found') await refreshResponderKeysIfStale();
       await refreshSession();
     } catch (e) {
       console.error('[AppContext] personnel verification failed:', e);

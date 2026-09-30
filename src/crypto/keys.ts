@@ -15,6 +15,17 @@ import type { TagDecodeKeys, TagKeys } from './tagFormat';
 //                             here in encrypted storage.
 
 const KEYRING = 'lifetap:responder_keys';
+const KEYRING_FETCHED_AT = 'lifetap:responder_keys_fetched_at';
+
+// How often an online responder re-downloads the keyring. Each download writes
+// a fetch_tag_keys audit row, so doing it on every foreground flooded the log.
+// A day still picks up rotations and retirements, and a tag sealed to a key
+// this phone lacks triggers its own refresh (profileFromLifetapRecord).
+export const KEY_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+export function keysNeedRefresh(hasKeys: boolean, fetchedAt: number | null, now: number): boolean {
+  return !hasKeys || fetchedAt === null || now - fetchedAt >= KEY_REFRESH_INTERVAL_MS || now < fetchedAt;
+}
 
 function hexKey(name: string): Uint8Array | null {
   const value = (Config as Record<string, string | undefined>)[name]?.trim();
@@ -88,6 +99,7 @@ export async function refreshResponderKeys(): Promise<boolean> {
     const { data, error } = await supabase.functions.invoke('responder-keys', { method: 'POST' });
     if (error || !data?.keys || typeof data.keys !== 'object') return false;
     await EncryptedStorage.setItem(KEYRING, JSON.stringify(data.keys));
+    await EncryptedStorage.setItem(KEYRING_FETCHED_AT, String(Date.now()));
     return true;
   } catch {
     return false;
@@ -98,10 +110,26 @@ export async function ensureResponderKeys(): Promise<void> {
   if (!(await hasResponderKeys())) await refreshResponderKeys();
 }
 
-export async function clearResponderKeys(): Promise<void> {
+async function readFetchedAt(): Promise<number | null> {
   try {
-    await EncryptedStorage.removeItem(KEYRING);
+    const n = Number(await EncryptedStorage.getItem(KEYRING_FETCHED_AT));
+    return Number.isFinite(n) && n > 0 ? n : null;
   } catch {
-    // iOS rejects removing a missing item — nothing to clear.
+    return null;
   }
+}
+
+// For the regular online personnel check: download only when the keyring is
+// missing or a day old.
+export async function refreshResponderKeysIfStale(): Promise<void> {
+  const [hasKeys, fetchedAt] = await Promise.all([hasResponderKeys(), readFetchedAt()]);
+  if (keysNeedRefresh(hasKeys, fetchedAt, Date.now())) await refreshResponderKeys();
+}
+
+export async function clearResponderKeys(): Promise<void> {
+  // iOS rejects removing a missing item — nothing to clear then.
+  await Promise.all([
+    EncryptedStorage.removeItem(KEYRING).catch(() => {}),
+    EncryptedStorage.removeItem(KEYRING_FETCHED_AT).catch(() => {}),
+  ]);
 }
