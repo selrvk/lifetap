@@ -128,6 +128,17 @@ export default function NewReportScreen() {
             <Text className="text-slate-800 text-xl font-bold">New Report</Text>
           </View>
 
+          {/* Reports only upload to the city on the responder's personnel
+              record (reports_insert_in_city); admins aren't limited. */}
+          {responderProfile && responderProfile.role !== 'admin' && !responderProfile.city && (
+            <View className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 mb-4 flex-row items-center">
+              <Text className="text-amber-700 text-base mr-2">⚠</Text>
+              <Text className="text-amber-800 text-xs flex-1">
+                Your personnel record has no city, so reports you start here stay on this phone and can’t upload to the dashboard. Ask your LifeTap admin to set your city.
+              </Text>
+            </View>
+          )}
+
           {activeReport && (
             <View className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 mb-4 flex-row items-center">
               <Text className="text-amber-700 text-base mr-2">⚠</Text>

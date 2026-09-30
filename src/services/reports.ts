@@ -9,6 +9,24 @@ import {
 
 export type SyncResult = { ok: boolean; error?: string };
 
+// Postgres "insufficient_privilege": the row-level security policy refused the
+// report. For reports that means the account isn't active personnel, or the
+// report's city doesn't match the city on the responder's personnel record
+// (including a record with no city at all).
+const RLS_DENIED = '42501';
+
+// A sentence the responder can act on, instead of the raw database error.
+export function reportSyncErrorMessage(error: { code?: string; message?: string }): string {
+  const message = error.message ?? '';
+  if (error.code === RLS_DENIED || /row-level security/i.test(message)) {
+    return 'The server didn’t accept this report. Reports upload to the city on your personnel record, and yours is missing or different from this report’s. Ask your LifeTap admin to check your record. The report stays saved on this phone.';
+  }
+  if (/network request failed|failed to fetch|network error|timed? ?out/i.test(message)) {
+    return 'No internet connection. The report is saved on this phone and uploads automatically the next time you open LifeTap with a signal.';
+  }
+  return `The report couldn’t be uploaded (${message || 'unknown error'}). It stays saved on this phone — try again later.`;
+}
+
 function toRow(report: Report) {
   return {
     id: report.id,
@@ -28,12 +46,12 @@ export async function syncReportToCloud(report: Report): Promise<SyncResult> {
     const { error } = await supabase
       .from('reports')
       .upsert(toRow(report), { onConflict: 'id' });
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: reportSyncErrorMessage(error) };
     // Only marks it synced if nothing changed while the upload was in flight.
     await markReportSynced(report.id, report.updatedAt);
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: String(e?.message ?? e) };
+    return { ok: false, error: reportSyncErrorMessage({ message: String(e?.message ?? e) }) };
   }
 }
 
