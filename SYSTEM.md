@@ -199,6 +199,7 @@ Overlays use `containedTransparentModal` presentation so the underlying tab scre
 - On success: `navigation.replace('NFCResult', { data })` — `data` is a validated `TagProfile`
 - On parse failure / non-LifeTap tag: `NFCSheet` with "Unrecognized tag" error + "Try Again" button
 - On NFC error: `NFCSheet` with generic error
+- On a device without an NFC reader (`NFC_UNAVAILABLE` — an iPad running the iPhone app, iPhone 6 or older): "NFC Not Available", no Try Again
 - On cancel (our ✕ or the iOS system sheet): closes quietly, no error sheet
 
 #### `WriteNFC` (`src/screens/overlays/WriteNFC.tsx`)
@@ -206,6 +207,7 @@ Route params: `{ mode?: 'write' | 'erase'; ownId?: string }` (`ownId`: the tag's
 - **ConfirmStep** (write): preview of all data about to be written (identity, medical, kin, privacy, SMS-alert choice)
 - Refuses to write (`NeedsConsentStep`) until the profile has current consent
 - Calls `writeNfcTag()` (payload includes `sms: consent.smsAlerts`), then `markSyncedToTag()` on success
+- Failures map to a sentence per `TagWriteResult` reason (`failureMessage`), including `no_nfc` for a device without an NFC reader
 - **Erase mode**: `ConfirmEraseStep` → `eraseNfcTag()`; works without a local profile (used after withdrawing consent)
 - **Overwrite prompt** (`overwrite`): the tag holds a different LifeTap id or another app's data. Offers **Replace It / Erase Anyway** (retries with `force`), **Use a Different Tag** (back to `confirm`, keeping route params such as `ownId`) and Cancel. With no profile on the phone and no `ownId`, a LifeTap tag is described as "This tag holds a LifeTap profile… make sure the tag is yours" rather than "someone else's" — the app deliberately doesn't remember a deleted profile's id
 - On success: transitions to `ResultStep` (in-screen success, not the shared Success overlay)
@@ -238,6 +240,7 @@ Generic success modal. Params: `{ message, subMessage? }`.
 #### `NewReportScreen` (`src/screens/responder/NewReportScreen.tsx`)
 - Fields: Report Name, Location (pre-filled from `responderProfile.city`), Date (plain text input, defaults to today as `YYYY-MM-DD`)
 - If an active report exists: shows an amber warning banner + confirmation dialog before replacing
+- A medic/responder whose personnel record has no `city` gets a warning that reports can't upload (`reports_insert_in_city` requires `city = current_city()`); admins aren't limited
 - On submit: `createReport()` from AppContext → navigates to Scan tab
 - Shows a responder info card (name + organization) below the fields
 
@@ -338,6 +341,8 @@ Two backends:
 |---------|----------|
 | `react-native-encrypted-storage` | Sensitive data: user profile, cloud session, reports, Supabase auth session |
 | `@react-native-async-storage/async-storage` | Non-sensitive app settings only |
+
+**Reinstalls (iOS):** Keychain items outlive the app, so `AppDelegate.clearKeychainFromPreviousInstall()` runs before JS on the first launch of each install (marker `lifetap.keychainLeftoversChecked` in UserDefaults, which uninstall erases) and deletes generic-password items created before the app's data container. An update keeps the container, so an existing install's items are never older than it; a reinstall gets a new container, so the old profile, session, responder keys and reports are removed. Known trade-off: a phone migrated from a backup before ever running this build also starts empty. If the Keychain is locked at launch (before first unlock) the check is retried next launch.
 
 ### Storage Keys
 
@@ -446,7 +451,7 @@ Typical profile ≈ 544 B, heavy profile ≈ 705 B of NTAG216's 872 B (the old p
 |-----|-------|---------|
 | `TAG_APP_SECRET` (+ `TAG_APP_KEY_ID`) | `.env`, baked into every build | Section A key and NTAG passwords. Keeps generic NFC apps out; extractable by someone who unpacks the app, so only name/blood type/ID live there |
 | `TAG_RESPONDER_PUBLIC_KEY` (+ `TAG_RESPONDER_KEY_ID`) | `.env` | Seals section B when writing |
-| Responder private keys | Supabase secrets `TAG_RESPONDER_KEY_<id>` (plus the legacy JSON secret `TAG_RESPONDER_PRIVATE_KEYS`, which holds key 1 on this project); `responder-keys` Edge Function gives **all configured ids** to **active personnel only** (audited as `fetch_tag_keys`); cached in `EncryptedStorage` as a keyring | Opens section B. Keyring is replaced on each online personnel check (so new keys arrive and retired ones disappear), fetched when missing, deleted when the account stops being personnel |
+| Responder private keys | Supabase secrets `TAG_RESPONDER_KEY_<id>` (plus the legacy JSON secret `TAG_RESPONDER_PRIVATE_KEYS`, which holds key 1 on this project); `responder-keys` Edge Function gives **all configured ids** to **active personnel only** (audited as `fetch_tag_keys`); cached in `EncryptedStorage` as a keyring | Opens section B. Keyring is re-downloaded by the online personnel check at most once a day (`refreshResponderKeysIfStale`, timestamp in `lifetap:responder_keys_fetched_at`) so new keys arrive and retired ones disappear, fetched whenever missing or when a tag is sealed to a key the phone lacks, deleted when the account stops being personnel |
 
 **Key management** — `scripts/tag-keys.mjs`:
 
@@ -476,7 +481,7 @@ See Section 10.
 
 | Function | Description |
 |----------|-------------|
-| `syncReportToCloud(report)` | Upserts a single report to Supabase `reports` table, then calls `markReportSynced()` |
+| `syncReportToCloud(report)` | Upserts a single report to Supabase `reports` table, then calls `markReportSynced()`. Errors go through `reportSyncErrorMessage()`: an RLS refusal (`42501`) says the report's city doesn't match the responder's personnel record, a network failure says it uploads automatically later |
 | `syncAllUnsyncedReports(owner)` | Gets all reports, filters `!syncedToCloud` **and owned by `owner`**, calls `syncReportToCloud()` on each (the server stamps `created_by` = caller, so uploading another account's report would misfile it) |
 
 Called automatically on app foreground (via `AppContext`) and manually from `ReportDetailScreen`.
@@ -485,7 +490,7 @@ Called automatically on app foreground (via `AppContext`) and manually from `Rep
 
 | Function | Description |
 |----------|-------------|
-| `sendVictimAlert(entry, location)` | Calls Supabase Edge Function `send-sms` with victim name, kin phone numbers (PH mobiles only), location, and time. Maps 401/403/429 to readable errors; `sentTo` lists numbers the server actually delivered to |
+| `sendVictimAlert(entry, location)` | Calls Supabase Edge Function `send-sms` with victim name, kin phone numbers (PH mobiles only), location, and time. Returns `{ ok: true, sentTo, requested }` (`sentTo`: numbers the server actually delivered to) or `{ ok: false, message }` — `alertFailureMessage()` turns no PH numbers, offline (`FunctionsFetchError`), 401/403/429/502/5xx into a sentence that tells the responder to call the contacts instead |
 
 The Edge Function (`supabase/functions/send-sms/`) uses Twilio to send parallel SMS messages. It:
 - verifies the caller's JWT and requires an **active `personnel` row** (403 otherwise)
@@ -780,7 +785,7 @@ src/
   legal/
     privacyNotice.ts            Privacy notice + responder undertaking text
 
-__tests__/                      Jest: App render, report storage, tag payload parsing, sync status, consent history
+__tests__/                      Jest: App render, report storage, tag payload parsing, sync status, consent history, alert/sync error messages, key refresh cadence, no-NFC devices
 jest.setup.js                   Native-module mocks (in-memory Keychain, config, NFC, animations)
 scripts/
   tag-keys.mjs                  Tag key management (status / init / rotate / retire)
