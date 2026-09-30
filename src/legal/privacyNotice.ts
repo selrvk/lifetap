@@ -13,7 +13,7 @@ export const PRIVACY_NOTICE_VERSION = '2026-09-v3';
 export const RESPONDER_UNDERTAKING_VERSION = 'resp-2026-09-v1';
 
 // Shows a "Draft" label on the notice until it has been reviewed.
-export const NOTICE_IS_DRAFT = true;
+export const NOTICE_IS_DRAFT = false;
 
 // The team is the personal information controller for the capstone pilot —
 // no LGU has adopted LifeTap yet. ArchTech handles every privacy concern
