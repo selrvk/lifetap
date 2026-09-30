@@ -100,12 +100,17 @@ function ConfirmStep({
             Identity
           </Text>
           <Text className="text-slate-700 text-sm font-semibold">{user.n}</Text>
-          <Text className="text-slate-400 text-xs mt-0.5">
-            {user.bt} · {user.dob} · {user.rel}
-          </Text>
-          <Text className="text-slate-400 text-xs mt-0.5">
-            {user.brg}, {user.cty}
-          </Text>
+          {/* DOB, religion and address are optional — skip the blanks. */}
+          {[user.bt, user.dob, user.rel].some(Boolean) && (
+            <Text className="text-slate-400 text-xs mt-0.5">
+              {[user.bt, user.dob, user.rel].filter(Boolean).join(' · ')}
+            </Text>
+          )}
+          {[user.brg, user.cty].some(Boolean) && (
+            <Text className="text-slate-400 text-xs mt-0.5">
+              {[user.brg, user.cty].filter(Boolean).join(', ')}
+            </Text>
+          )}
           {user.od && (
             <View className="bg-teal-100 rounded-lg px-2 py-0.5 self-start mt-2">
               <Text className="text-teal-700 text-xs font-semibold">Organ Donor</Text>
