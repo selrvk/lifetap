@@ -50,6 +50,8 @@ function failureMessage(r: Exclude<TagWriteResult, { ok: true }>): string | null
       return 'This tag is permanently read-only and can’t be written.';
     case 'not_configured':
       return 'Tag encryption isn’t set up in this build of the app (missing tag keys).';
+    case 'no_nfc':
+      return 'This device can’t write NFC tags. Writing a LifeTap tag needs an iPhone 7 or newer.';
     default:
       return null;
   }

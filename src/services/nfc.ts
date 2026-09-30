@@ -91,15 +91,25 @@ export function parseTagPayload(raw: unknown): TagProfile | null {
   };
 }
 
-// Call once at app startup in App.tsx
-export async function initNfc(): Promise<boolean> {
-  try {
-    const supported = await NfcManager.isSupported();
-    if (supported) await NfcManager.start();
-    return supported;
-  } catch {
-    return false;
-  }
+// Thrown by readNfcTag on a device without an NFC reader (an iPad running the
+// iPhone app, an iPhone 6 or older).
+export const NFC_UNAVAILABLE = 'NFC_UNAVAILABLE';
+
+let nfcReady: Promise<boolean> | null = null;
+
+// Started once at app startup (App.tsx); every read and write waits on it, so
+// a device without NFC gets a clear message instead of a failed scan.
+export function initNfc(): Promise<boolean> {
+  nfcReady ??= (async () => {
+    try {
+      const supported = await NfcManager.isSupported();
+      if (supported) await NfcManager.start();
+      return supported;
+    } catch {
+      return false;
+    }
+  })();
+  return nfcReady;
 }
 
 type NdefRecordLike = { tnf: number; type: any; payload: any };
@@ -142,8 +152,10 @@ function findLifetapRecord(records: NdefRecordLike[]): NdefRecordLike | undefine
 }
 
 // read — returns the profile, or null if the read failed.
-// Throws UNRECOGNIZED_TAG for non-LifeTap tags and NFC_CANCELLED on cancel.
+// Throws UNRECOGNIZED_TAG for non-LifeTap tags, NFC_CANCELLED on cancel and
+// NFC_UNAVAILABLE on a device that can't read NFC.
 export async function readNfcTag(): Promise<TagProfile | null> {
+  if (!(await initNfc())) throw new Error(NFC_UNAVAILABLE);
   // Read the records, then close the NFC session before decrypting — so the
   // system sheet dismisses quickly and a key refresh never holds it open.
   let records: NdefRecordLike[];
@@ -181,7 +193,8 @@ export type TagWriteResult =
   // responderKeyId: key the medical section was sealed to (0 = public profile,
   // nothing sealed); undefined for erase.
   | { ok: true; responderKeyId?: number }
-  | { ok: false; reason: 'not_configured' | 'unsupported' | 'not_ndef' | 'read_only' | 'locked' | 'failed' }
+  // no_nfc: this device has no NFC reader. unsupported: the tag isn't an NTAG21x.
+  | { ok: false; reason: 'not_configured' | 'no_nfc' | 'unsupported' | 'not_ndef' | 'read_only' | 'locked' | 'failed' }
   | { ok: false; reason: 'too_large'; needed: number; capacity: number }
   // The tag already holds someone else's LifeTap profile, or other data.
   // Re-run with { force: true } after the user confirms.
@@ -256,6 +269,7 @@ async function writeMessage(
 ): Promise<TagWriteResult> {
   const appSecret = getAppSecret();
   if (!appSecret) return { ok: false, reason: 'not_configured' };
+  if (!(await initNfc())) return { ok: false, reason: 'no_nfc' };
 
   try {
     return await withNtagSession(async (t, uid): Promise<TagWriteResult> => {
