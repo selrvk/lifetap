@@ -237,14 +237,15 @@ export default function NFCResultScreen() {
       setSmsSent(true);
       const target = targetReportRef.current;
       if (target && entryId) await markVictimSmsSent(target.id, entryId);
-      Alert.alert('Alert sent', `SMS sent to ${res.sentTo?.length ?? 0} contact(s).`);
-    } else {
+      const sent = res.sentTo.length;
       Alert.alert(
-        'SMS failed',
-        res.error === 'no_kin_numbers'
-          ? 'No valid phone numbers for this victim.'
-          : `Could not send SMS: ${res.error ?? 'unknown error'}`
+        'Alert sent',
+        sent < res.requested
+          ? `SMS sent to ${sent} of ${res.requested} contacts. Call the others if you can.`
+          : `SMS sent to ${sent} contact${sent === 1 ? '' : 's'}.`
       );
+    } else {
+      Alert.alert('SMS not sent', res.message);
     }
   }
 
