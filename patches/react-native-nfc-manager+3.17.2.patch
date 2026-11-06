@@ -1,0 +1,43 @@
+diff --git a/node_modules/react-native-nfc-manager/ios/NfcManager.m b/node_modules/react-native-nfc-manager/ios/NfcManager.m
+--- a/node_modules/react-native-nfc-manager/ios/NfcManager.m
++++ b/node_modules/react-native-nfc-manager/ios/NfcManager.m
+@@ -186,6 +186,10 @@
+ - (void)tagReaderSession:(NFCTagReaderSession *)session didDetectTags:(NSArray<__kindof id<NFCTag>> *)tags
+     API_AVAILABLE(ios(13.0)) {
+     NSLog(@"NFCTag didDetectTags");
++    // LifeTap patch: ignore a session that has already been replaced or cancelled.
++    if (session != tagSession) {
++        return;
++    }
+     if (techRequestCallback != nil) {
+         for (id<NFCTag> tag in tags) {
+             NSString * tagType = [self getRNTechName:tag];
+@@ -218,6 +222,14 @@
+ - (void)tagReaderSession:(NFCTagReaderSession *)session didInvalidateWithError:(NSError *)error
+     API_AVAILABLE(ios(13.0)) {
+     NSLog(@"NFCTag didInvalidateWithError");
++    // LifeTap patch: iOS reports a cancelled session as closed a moment later.
++    // If a new scan has started by then, that late report used to fail the new
++    // scan and drop its session (an NFC sheet that no longer reads tags).
++    // Reports from any session other than the current one are ignored.
++    if (session != tagSession) {
++        NSLog(@"NFCTag ignoring invalidation of a stale session");
++        return;
++    }
+     if (techRequestCallback) {
+         techRequestCallback(@[getErrorMessage(error)]);
+         techRequestCallback = nil;
+@@ -325,6 +337,13 @@
+ {
+     if (@available(iOS 13.0, *)) {
+         if (tagSession != nil) {
++            // LifeTap patch: settle a pending requestTechnology now as a user
++            // cancel, since this session's late invalidation is ignored above.
++            if (techRequestCallback) {
++                techRequestCallback(@[@"NFCError:200"]);
++                techRequestCallback = nil;
++            }
++            techRequestTypes = nil;
+             [tagSession invalidateSession];
+             tagSession = nil;
+             callback(@[]);
